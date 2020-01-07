@@ -3,6 +3,7 @@
 use std::io::{self, Read, Write};
 use std::io::ErrorKind::{self, InvalidData, UnexpectedEof};
 use std::cell::Cell;
+use std::fmt;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
@@ -51,56 +52,69 @@ pub const SUPPLEMENTARY: u16 = 0x800;
 pub struct Flag(pub u16);
 
 impl Flag {
+    /// Checks if all bits match the mask.
+    pub fn all_bits(&self, mask: u16) -> bool {
+        (self.0 & mask) == mask
+    }
+
+    /// Checks if any bit matches the mask.
+    pub fn any_bit(&self, mask: u16) -> bool {
+        (self.0 & mask) != 0
+    }
+
+    /// Checks if all bits do not match the mask.
+    pub fn no_bits(&self, mask: u16) -> bool {
+        (self.0 & mask) == 0
+    }
+
     pub fn is_paired(&self) -> bool {
-        self.0 & RECORD_PAIRED != 0
+        self.any_bit(RECORD_PAIRED)
     }
 
     pub fn all_segments_aligned(&self) -> bool {
-        self.0 & ALL_SEGMENTS_ALIGNED != 0
+        self.any_bit(ALL_SEGMENTS_ALIGNED)
     }
 
     pub fn is_mapped(&self) -> bool {
-        // EQUAL 0
-        self.0 & RECORD_UNMAPPED == 0
+        self.no_bits(RECORD_UNMAPPED)
     }
 
     pub fn mate_is_mapped(&self) -> bool {
-        // EQUAL 0
-        self.0 & MATE_UNMAPPED == 0
+        self.no_bits(MATE_UNMAPPED)
     }
 
     pub fn is_reverse_strand(&self) -> bool {
-        self.0 & RECORD_REVERSE_STRAND != 0
+        self.any_bit(RECORD_REVERSE_STRAND)
     }
 
     pub fn mate_is_reverse_strand(&self) -> bool {
-        self.0 & MATE_REVERSE_STRAND != 0
+        self.any_bit(MATE_REVERSE_STRAND)
     }
 
     pub fn first_in_pair(&self) -> bool {
-        self.0 & FIRST_IN_PAIR != 0
+        self.any_bit(FIRST_IN_PAIR)
     }
 
     pub fn last_in_pair(&self) -> bool {
-        self.0 & LAST_IN_PAIR != 0
+        self.any_bit(LAST_IN_PAIR)
     }
 
     pub fn is_secondary(&self) -> bool {
-        self.0 & SECONDARY != 0
+        self.any_bit(SECONDARY)
     }
 
     /// Returns `true` if the record fails filters, such as platform/vendor quality controls.
     pub fn fails_quality_controls(&self) -> bool {
-        self.0 & RECORD_FAILS_QC != 0
+        self.any_bit(RECORD_FAILS_QC)
     }
 
     /// Returns `true` if the record is PCR or optical duplicate.
     pub fn is_duplicate(&self) -> bool {
-        self.0 & PCR_OR_OPTICAL_DUPLICATE != 0
+        self.any_bit(PCR_OR_OPTICAL_DUPLICATE)
     }
 
     pub fn is_supplementary(&self) -> bool {
-        self.0 & SUPPLEMENTARY != 0
+        self.any_bit(SUPPLEMENTARY)
     }
 
     /// Modifies the record flag. This function does not do any checks.
@@ -624,7 +638,7 @@ impl Record {
     /// Returns the index after the last aligned base in the record. Returns zero for unmapped records.
     pub fn aligned_query_end(&self) -> u32 {
         if self.flag.is_mapped() {
-            self.cigar.soft_clipping(false)
+            self.query_len() - self.cigar.soft_clipping(false)
         } else {
             0
         }
@@ -940,5 +954,13 @@ impl Record {
     /// If the record is unmapped, returns an empty iterator.
     pub fn matching_pairs(&self) -> cigar::MatchingPairs {
         self.cigar.matching_pairs(self.start as u32)
+    }
+}
+
+impl fmt::Debug for Record {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "record {} (len {}) aligned to {}:{}-{}",
+            std::str::from_utf8(&self.name).expect("Record name not in UTF-8"), self.query_len(),
+            self.ref_id(), self.start(), self.calculate_end())
     }
 }

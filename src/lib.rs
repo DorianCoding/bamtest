@@ -100,7 +100,6 @@
 //! }
 //! ```
 
-
 extern crate byteorder;
 extern crate crc32fast;
 extern crate flate2;

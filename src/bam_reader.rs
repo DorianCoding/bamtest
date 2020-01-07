@@ -244,6 +244,10 @@ impl Region {
         assert!(self.start <= end, "Region: start should not be greater than end ({} > {})", self.start, end);
         self.end = end;
     }
+
+    pub fn contains(&self, ref_id: u32, pos: u32) -> bool {
+        self.ref_id == ref_id && self.start <= pos && pos < self.end
+    }
 }
 
 /// BAM file reader. In contrast to [BamReader](struct.BamReader.html) the `IndexedReader`
