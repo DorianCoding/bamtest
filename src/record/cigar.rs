@@ -319,6 +319,7 @@ impl Cigar {
 
     /// Returns the size of the soft clipping
     /// on the left side if `left_side` and on the right side otherwise.
+    /// The function ignores any hard clipping in the process.
     pub fn soft_clipping(&self, left_side: bool) -> u32 {
         let iter: Box<dyn Iterator<Item = _>> = if left_side {
             Box::new(self.iter())

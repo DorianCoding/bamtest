@@ -341,6 +341,7 @@ impl Region {
 /// ```
 /// You can also ignore the error completely: `.modification_time(ModificationTime::Ignore)`.
 
+// TODO: IndexedReader::fetch_full
 pub struct IndexedReader<R: Read + Seek> {
     reader: bgzip::SeekReader<R>,
     header: Header,

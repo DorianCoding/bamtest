@@ -338,7 +338,7 @@ impl Qualities {
         &self.raw
     }
 
-    /// Returns 0 if qualities are not available.
+    /// Returns zero if qualities are not available.
     pub fn len(&self) -> usize {
         if self.available() {
             self.raw.len()

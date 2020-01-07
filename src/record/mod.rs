@@ -436,6 +436,10 @@ impl Record {
         }
         let qual_len = qual_len as usize;
 
+        if self.flag().is_mapped() && cigar_len == 0 {
+            return Err(self.corrupt("Mapped read has an empty CIGAR".to_string()));
+        }
+
         let mate_ref_id = stream.read_i32::<LittleEndian>()?;
         if mate_ref_id < -1 {
             return Err(self.corrupt("Mate reference id < 1".to_string()));
@@ -503,6 +507,9 @@ impl Record {
         self.set_mapq(mapq);
 
         self.set_cigar(split.try_next("CIGAR")?.bytes()).map_err(|e| self.corrupt(e))?;
+        if self.flag().is_mapped() && self.cigar.len() == 0 {
+            return Err(self.corrupt("Mapped read has an empty CIGAR".to_string()));
+        }
 
         let rnext = split.try_next("mate reference name (RNEXT)")?;
         if rnext == "*" {
@@ -626,7 +633,7 @@ impl Record {
     /// Consecutive calculations take O(1).
     /// If the record was fetched from a specific region, it should have `end` already calculated.
     ///
-    /// Returns 0 for unmapped records.
+    /// Returns zero for unmapped records.
     pub fn calculate_end(&self) -> i32 {
         if self.cigar.is_empty() {
             return 0;
@@ -640,6 +647,35 @@ impl Record {
         let end = self.start + self.cigar.calculate_ref_len() as i32;
         self.end.set(end);
         end
+    }
+
+    /// Returns query length. The function returns the length of the sequence if it is present.
+    /// Otherwise, the function returns the length calculated from the CIGAR.
+    /// Unmapped records without sequence would get length 0.
+    pub fn query_len(&self) -> u32 {
+        if self.seq.available() {
+            self.seq.len() as u32
+        } else {
+            self.cigar.calculate_query_len()
+        }
+    }
+
+    /// Returns the index of the first aligned base in the record. Returns the length of the query for unmapped records.
+    pub fn aligned_query_start(&self) -> u32 {
+        if self.flag.is_mapped() {
+            self.cigar.soft_clipping(true)
+        } else {
+            self.query_len()
+        }
+    }
+
+    /// Returns the index after the last aligned base in the record. Returns zero for unmapped records.
+    pub fn aligned_query_end(&self) -> u32 {
+        if self.flag.is_mapped() {
+            self.cigar.soft_clipping(false)
+        } else {
+            0
+        }
     }
 
     /// Returns BAI bin. If the bin is unknown and the end has not been calculated,
