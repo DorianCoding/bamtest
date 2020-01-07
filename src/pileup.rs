@@ -178,8 +178,8 @@ impl PileupRecord {
     }
 }
 
-pub struct Pileup<'r, R: RecordReader> {
-    reader: &'r mut R,
+pub struct Pileup<'a, I: Iterator<Item = io::Result<Record>>> {
+    record_iter: &'a mut I,
     read_filter: Box<dyn Fn(&Record) -> bool>,
     records: Vec<PileupRecord>,
     error: Option<io::Error>,
@@ -188,14 +188,17 @@ pub struct Pileup<'r, R: RecordReader> {
     last_ref_pos: u32,
 }
 
-impl<'r, R: RecordReader> Pileup<'r, R> {
-    fn new(reader: &'r mut R, read_filter: Box<dyn Fn(&Record) -> bool>) -> Self {
+impl<'a, I: Iterator<Item = io::Result<Record>>> Pileup<'a, I> {
+    pub fn new(record_iter: &'a mut I) -> Self {
+        Self::with_filter(record_iter, |_| true)
+    }
+
+    pub fn with_filter<F: 'static + Fn(&Record) -> bool>(record_iter: &'a mut I, read_filter: F) -> Self {
         let mut res = Pileup {
-            reader,
-            read_filter,
+            record_iter,
+            read_filter: Box::new(read_filter),
             records: Vec::new(),
             error: None,
-
             last_ref_id: 0,
             last_ref_pos: 0,
         };
@@ -216,7 +219,7 @@ impl<'r, R: RecordReader> Pileup<'r, R> {
             return;
         }
         loop {
-            match self.reader.next() {
+            match self.record_iter.next() {
                 None => self.last_ref_id = std::u32::MAX,
                 Some(Ok(record)) => {
                     if !self.record_passes(&record) {
@@ -243,7 +246,7 @@ impl<'r, R: RecordReader> Pileup<'r, R> {
     }
 }
 
-impl<'r, R: RecordReader> Iterator for Pileup<'r, R> {
+impl<'a, R: RecordReader> Iterator for Pileup<'a, R> {
     type Item = io::Result<PileupColumn>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -305,22 +308,6 @@ impl<'r, R: RecordReader> Iterator for Pileup<'r, R> {
         }
     }
 }
-
-impl<'r, R: RecordReader> std::iter::FusedIterator for Pileup<'r, R> {}
-
-pub trait ToPileup: RecordReader + Sized {
-    fn pileup<'a>(&'a mut self) -> Pileup<'a, Self> {
-        self.pileup_using(|_record| true)
-    }
-
-    fn pileup_using<'a, F: 'static + Fn(&Record) -> bool>(&'a mut self, filter: F) -> Pileup<'a, Self> {
-        Pileup::new(self, Box::new(filter))
-    }
-}
-
-impl<R: io::BufRead> ToPileup for super::SamReader<R> {}
-impl<R: io::Read> ToPileup for super::BamReader<R> {}
-impl<'a, R: io::Read> ToPileup for super::bam_reader::RegionViewer<'a, R> {}
 
 #[derive(Clone)]
 pub struct PileupColumn {
