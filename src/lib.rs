@@ -120,13 +120,11 @@ pub use bam_reader::Region;
 pub use bam_writer::BamWriter;
 
 pub use header::Header;
-
 pub use record::Record;
-pub use record::Error;
-
 pub use sam::SamWriter;
 pub use sam::SamReader;
 
+use std::io;
 
 /// A trait for reading BAM/SAM records.
 ///
@@ -135,11 +133,11 @@ pub use sam::SamReader;
 ///let mut record = bam::Record::new();
 ///loop {
 ///    // reader: impl RecordReader
-///    match reader.read_into(&mut record) {
 ///    // New record is saved into record.
-///        Ok(()) => {},
-///        // NoMoreRecords represents stop iteration.
-///        Err(bam::Error::NoMoreRecords) => break,
+///    match reader.read_into(&mut record) {
+///        // No more records to read.
+///        Ok(false) => break,
+///        Ok(true) => {},
 ///        Err(e) => panic!("{}", e),
 ///    }
 ///    // Do somethind with the record.
@@ -152,31 +150,22 @@ pub use sam::SamReader;
 ///    // Do somethind with the record.
 ///}
 ///```
-pub trait RecordReader: Iterator<Item = Result<Record, Error>> {
+pub trait RecordReader: Iterator<Item = io::Result<Record>> {
     /// Writes the next record into `record`. It allows to skip excessive memory allocation.
+    /// If there are no more records to iterate over, the function returns `false`.
     ///
-    /// # Errors
-    ///
-    /// If there are no more records to iterate over, the function returns
-    /// [NoMoreRecords](record/enum.Error.html#variant.NoMoreRecords) error.
-    ///
-    /// If the record was corrupted, the function returns
-    /// [Corrupted](record/enum.Error.html#variant.Corrupted) error.
-    /// If the record was truncated or the reading failed for a different reason, the function
-    /// returns [Truncated](record/enum.Error.html#variant.Truncated) error.
-    ///
-    /// If the function returns an error, the record is supposed to be cleared.
-    fn read_into(&mut self, record: &mut Record) -> Result<(), Error>;
+    /// If the function returns an error, the record is cleared.
+    fn read_into(&mut self, record: &mut Record) -> io::Result<bool>;
 }
 
 /// A trait for writing BAM/SAM records.
 pub trait RecordWriter {
     /// Writes a single record.
-    fn write(&mut self, record: &Record) -> std::io::Result<()>;
+    fn write(&mut self, record: &Record) -> io::Result<()>;
 
     /// Finishes the stream, same as `std::mem::drop(writer)`, but can return an error.
-    fn finish(&mut self) -> std::io::Result<()>;
+    fn finish(&mut self) -> io::Result<()>;
 
     /// Flushes contents.
-    fn flush(&mut self) -> std::io::Result<()>;
+    fn flush(&mut self) -> io::Result<()>;
 }

@@ -2,9 +2,8 @@
 
 use std::fs::File;
 use std::io::{Read, Seek, Result, Error};
-use std::io::ErrorKind::InvalidInput;
+use std::io::ErrorKind::{InvalidData, InvalidInput};
 use std::path::{Path, PathBuf};
-use std::result;
 
 use super::index::{self, Index};
 use super::record;
@@ -26,11 +25,12 @@ pub struct RegionViewer<'a, R: Read> {
 }
 
 impl<'a, R: Read> RecordReader for RegionViewer<'a, R> {
-    fn read_into(&mut self, record: &mut record::Record) -> result::Result<(), record::Error> {
+    fn read_into(&mut self, record: &mut record::Record) -> Result<bool> {
         loop {
-            if let Err(e) = record.fill_from_bam(&mut self.reader) {
+            let res = record.fill_from_bam(&mut self.reader);
+            if !res.as_ref().unwrap_or(&false) {
                 record.clear();
-                return Err(e);
+                return res;
             }
             if !record.flag().is_mapped() {
                 continue;
@@ -38,7 +38,7 @@ impl<'a, R: Read> RecordReader for RegionViewer<'a, R> {
             // Reads are sorted, so no more reads would be in the region.
             if record.start() >= self.end {
                 record.clear();
-                return Err(record::Error::NoMoreRecords);
+                return Ok(false);
             }
             if !(self.predicate)(&record) {
                 continue;
@@ -46,42 +46,34 @@ impl<'a, R: Read> RecordReader for RegionViewer<'a, R> {
             let record_bin = record.calculate_bin();
             if record_bin > index::MAX_BIN {
                 record.clear();
-                return Err(record::Error::Corrupted(
-                    "Read has BAI bin bigger than max possible value".to_string()));
+                return Err(Error::new(InvalidData, "Read has BAI bin bigger than max possible value"));
             }
             let (min_start, max_end) = index::bin_to_region(record_bin);
             if min_start >= self.start && max_end <= self.end {
-                return Ok(());
+                return Ok(true);
             }
 
             let record_end = record.calculate_end();
             if record_end != -1 && record_end < record.start() {
                 record.clear();
-                return Err(record::Error::Corrupted("aln_end < aln_start".to_string()));
+                return Err(Error::new(InvalidData, "Corrupted record: aln_end < aln_start"));
             }
             if record_end > self.start {
-                return Ok(());
+                return Ok(true);
             }
         }
     }
 }
 
 /// Iterator over records.
-///
-/// # Errors
-///
-/// If the record was corrupted, the function returns
-/// [Corrupted](../record/enum.Error.html#variant.Corrupted) error.
-/// If the record was truncated or the reading failed for a different reason, the function
-/// returns [Truncated](../record/enum.Error.html#variant.Truncated) error.
 impl<'a, R: Read> Iterator for RegionViewer<'a, R> {
-    type Item = result::Result<record::Record, record::Error>;
+    type Item = Result<record::Record>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut record = record::Record::new();
         match self.read_into(&mut record) {
-            Ok(()) => Some(Ok(record)),
-            Err(record::Error::NoMoreRecords) => None,
+            Ok(true) => Some(Ok(record)),
+            Ok(false) => None,
             Err(e) => Some(Err(e)),
         }
     }
@@ -300,8 +292,8 @@ impl Region {
 ///     let mut record = bam::Record::new();
 ///     loop {
 ///         match viewer.read_into(&mut record) {
-///             Ok(()) => {},
-///             Err(bam::Error::NoMoreRecords) => break,
+///             Ok(true) => {},
+///             Ok(false) => break,
 ///             Err(e) => panic!("{}", e),
 ///         }
 ///         writer.write(&record).unwrap();
@@ -436,8 +428,8 @@ impl<R: Read + Seek> IndexedReader<R> {
 ///     let mut record = bam::Record::new();
 ///     loop {
 ///         match reader.read_into(&mut record) {
-///             Ok(()) => {},
-///             Err(bam::Error::NoMoreRecords) => break,
+///             Ok(true) => {},
+///             Ok(false) => break,
 ///             Err(e) => panic!("{}", e),
 ///         }
 ///         // Do something.
@@ -479,32 +471,24 @@ impl<R: Read> BamReader<R> {
 }
 
 impl<R: Read> RecordReader for BamReader<R> {
-    fn read_into(&mut self, record: &mut record::Record) -> result::Result<(), record::Error> {
-        if let Err(e) = record.fill_from_bam(&mut self.reader) {
+    fn read_into(&mut self, record: &mut record::Record) -> Result<bool> {
+        let res = record.fill_from_bam(&mut self.reader);
+        if !res.as_ref().unwrap_or(&false) {
             record.clear();
-            Err(e)
-        } else {
-            Ok(())
         }
+        res
     }
 }
 
 /// Iterator over records.
-///
-/// # Errors
-///
-/// If the record was corrupted, the function returns
-/// [Corrupted](../record/enum.Error.html#variant.Corrupted) error.
-/// If the record was truncated or the reading failed for a different reason, the function
-/// returns [Truncated](../record/enum.Error.html#variant.Truncated) error.
 impl<R: Read> Iterator for BamReader<R> {
-    type Item = result::Result<record::Record, record::Error>;
+    type Item = Result<record::Record>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut record = record::Record::new();
         match self.read_into(&mut record) {
-            Ok(()) => Some(Ok(record)),
-            Err(record::Error::NoMoreRecords) => None,
+            Ok(true) => Some(Ok(record)),
+            Ok(false) => None,
             Err(e) => Some(Err(e)),
         }
     }

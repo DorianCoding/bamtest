@@ -15,11 +15,8 @@
 use std::io::{Write, BufWriter, Result, BufReader, BufRead};
 use std::fs::File;
 use std::path::Path;
-use std::result;
 
-use super::header::Header;
-use super::record::{Record, Error};
-use super::{RecordReader, RecordWriter};
+use super::{RecordReader, RecordWriter, Header, Record};
 
 /// Builder of the [SamWriter](struct.SamWriter.html).
 pub struct SamWriterBuilder {
@@ -199,12 +196,12 @@ impl<R: BufRead> SamReader<R> {
 }
 
 impl<R: BufRead> RecordReader for SamReader<R> {
-    fn read_into(&mut self, record: &mut Record) -> result::Result<(), Error> {
+    fn read_into(&mut self, record: &mut Record) -> Result<bool> {
         if self.buffer.is_empty() {
-            return Err(Error::NoMoreRecords);
+            return Ok(false);
         }
         let res = match record.fill_from_sam(self.buffer.trim(), &self.header) {
-            Ok(()) => Ok(()),
+            Ok(()) => Ok(true),
             Err(e) => {
                 record.clear();
                 Err(e)
@@ -213,27 +210,20 @@ impl<R: BufRead> RecordReader for SamReader<R> {
         self.buffer.clear();
         match self.stream.read_line(&mut self.buffer) {
             Ok(_) => res,
-            Err(e) => res.or(Err(Error::Truncated(e))),
+            Err(e) => res.or(Err(e)),
         }
     }
 }
 
 /// Iterator over records.
-///
-/// # Errors
-///
-/// If the record was corrupted, the function returns
-/// [Corrupted](../record/enum.Error.html#variant.Corrupted) error.
-/// If the record was truncated or the reading failed for a different reason, the function
-/// returns [Truncated](../record/enum.Error.html#variant.Truncated) error.
 impl<R: BufRead> Iterator for SamReader<R> {
-    type Item = result::Result<Record, Error>;
+    type Item = Result<Record>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut record = Record::new();
         match self.read_into(&mut record) {
-            Ok(()) => Some(Ok(record)),
-            Err(Error::NoMoreRecords) => None,
+            Ok(true) => Some(Ok(record)),
+            Ok(false) => None,
             Err(e) => Some(Err(e)),
         }
     }

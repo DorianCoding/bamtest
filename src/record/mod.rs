@@ -1,8 +1,7 @@
 //! SAM/BAM record, sequence, qualities and operations on them.
 
-use std::io::{self, Read, ErrorKind, Write};
-use std::io::ErrorKind::{InvalidData, UnexpectedEof};
-use std::fmt::{self, Display, Debug, Formatter};
+use std::io::{self, Read, Write};
+use std::io::ErrorKind::{self, InvalidData, UnexpectedEof};
 use std::cell::Cell;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -224,53 +223,6 @@ impl Flag {
     }
 }
 
-/// Error produced while reading [Record](struct.Record.html).
-///
-/// # Variants
-///
-/// * `NoMoreRecords` - represents `StopIteration`,
-/// * `Corrupted(s)` - shows that reading the record produced impossible values, like negative length
-/// of the sequence. `s` contains additional information about the problem.
-/// * `Truncated(e)` - shows that reading the record was interrupted by `io::Error`.
-/// `e` contains the causing error.
-pub enum Error {
-    NoMoreRecords,
-    Corrupted(String),
-    Truncated(io::Error),
-}
-
-impl From<io::Error> for Error {
-    fn from(e: io::Error) -> Error {
-        Error::Truncated(e)
-    }
-}
-
-impl From<&str> for Error {
-    fn from(e: &str) -> Error {
-        Error::Corrupted(e.to_string())
-    }
-}
-
-impl Debug for Error {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        match self {
-            Error::NoMoreRecords => write!(f, "No more records"),
-            Error::Corrupted(e) => write!(f, "Corrupted record: {}", e),
-            Error::Truncated(e) => write!(f, "Truncated record: {}", e),
-        }
-    }
-}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        match self {
-            Error::NoMoreRecords => write!(f, "No more records"),
-            Error::Corrupted(e) => write!(f, "Corrupted record: {}", e),
-            Error::Truncated(e) => write!(f, "Truncated record: {}", e),
-        }
-    }
-}
-
 pub(crate) unsafe fn resize<T>(v: &mut Vec<T>, new_len: usize) {
     if v.capacity() < new_len {
         v.reserve(new_len - v.len());
@@ -299,13 +251,13 @@ where W: Write,
 
 /// A helper trait to get next from a splitted string.
 trait NextToErr<'a> {
-    fn try_next(&mut self, field: &'static str) -> Result<&'a str, Error>;
+    fn try_next(&mut self, field: &'static str) -> io::Result<&'a str>;
 }
 
 impl<'a> NextToErr<'a> for std::str::Split<'a, char> {
-    fn try_next(&mut self, field: &'static str) -> Result<&'a str, Error> {
-        self.next().ok_or_else(|| Error::Truncated(io::Error::new(UnexpectedEof,
-            format!("Cannot extract {}", field))))
+    fn try_next(&mut self, field: &'static str) -> io::Result<&'a str> {
+        self.next().ok_or_else(|| io::Error::new(UnexpectedEof,
+            format!("Truncated file: Cannot extract field {}", field)))
     }
 }
 
@@ -381,49 +333,50 @@ impl Record {
         self.tags.clear();
     }
 
-    fn corrupt(&mut self, text: String) -> Error {
+    fn corrupt(&mut self, text: &str) -> io::Error {
         if self.name.is_empty() {
-            Error::Corrupted(format!("Record {}: {}",
-                std::str::from_utf8(&self.name).unwrap_or("_"), text))
+            io::Error::new(InvalidData,
+                format!("Corrupted record {}: {}", std::str::from_utf8(&self.name).unwrap_or("_"), text))
         } else {
-            Error::Corrupted(text)
+            io::Error::new(InvalidData, format!("Corrupted record: {}", text))
         }
     }
 
     /// Fills the record from a `stream` of uncompressed BAM contents.
-    pub(crate) fn fill_from_bam<R: Read>(&mut self, stream: &mut R) -> Result<(), Error> {
+    /// Returns `false`, if the file ended and the record was not read.
+    pub(crate) fn fill_from_bam<R: Read>(&mut self, stream: &mut R) -> io::Result<bool> {
         self.name.clear();
         let block_size = match stream.read_i32::<LittleEndian>() {
             Ok(value) => {
                 if value < 0 {
-                    return Err(self.corrupt("Negative block size".to_string()));
+                    return Err(self.corrupt("Negative block size"));
                 }
                 value as usize
             },
             Err(e) => {
-                return Err(if e.kind() == ErrorKind::UnexpectedEof {
-                    Error::NoMoreRecords
+                if e.kind() == ErrorKind::UnexpectedEof {
+                    return Ok(false);
                 } else {
-                    Error::from(e)
-                })
+                    return Err(e);
+                }
             },
         };
         
         let ref_id = stream.read_i32::<LittleEndian>()?;
         if ref_id < -1 {
-            return Err(self.corrupt("Reference id < 1".to_string()));
+            return Err(self.corrupt("Reference id < 1"));
         }
         self.set_ref_id(ref_id);
 
         self.end.set(0);
         let start = stream.read_i32::<LittleEndian>()?;
         if start < -1 {
-            return Err(self.corrupt("Start < 1".to_string()));
+            return Err(self.corrupt("Start < 1"));
         }
         self.set_start(start);
         let name_len = stream.read_u8()?;
         if name_len == 0 {
-            return Err(self.corrupt("Name length == 0".to_string()));
+            return Err(self.corrupt("Name length == 0"));
         }
 
         self.set_mapq(stream.read_u8()?);
@@ -432,23 +385,23 @@ impl Record {
         self.set_flag(stream.read_u16::<LittleEndian>()?);
         let qual_len = stream.read_i32::<LittleEndian>()?;
         if qual_len < 0 {
-            return Err(self.corrupt("Negative sequence length".to_string()));
+            return Err(self.corrupt("Negative sequence length"));
         }
         let qual_len = qual_len as usize;
 
         if self.flag().is_mapped() && cigar_len == 0 {
-            return Err(self.corrupt("Mapped read has an empty CIGAR".to_string()));
+            return Err(self.corrupt("Mapped read has an empty CIGAR"));
         }
 
         let mate_ref_id = stream.read_i32::<LittleEndian>()?;
         if mate_ref_id < -1 {
-            return Err(self.corrupt("Mate reference id < 1".to_string()));
+            return Err(self.corrupt("Mate reference id < 1"));
         }
         self.set_mate_ref_id(mate_ref_id);
 
         let mate_start = stream.read_i32::<LittleEndian>()?;
         if mate_start < -1 {
-            return Err(self.corrupt("Mate start < 1".to_string()));
+            return Err(self.corrupt("Mate start < 1"));
         }
         self.set_mate_start(mate_start);
         self.set_template_len(stream.read_i32::<LittleEndian>()?);
@@ -470,18 +423,18 @@ impl Record {
         self.replace_cigar_if_needed()?;
 
         if self.flag().is_mapped() == (self.ref_id == -1) {
-            return Err(self.corrupt("Record (flag & 0x4) and ref_id do not match".to_string()));
+            return Err(self.corrupt("Record (flag & 0x4) and ref_id do not match"));
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Fills the record from SAM. If an error is return, the record may be corrupted.
-    pub fn fill_from_sam(&mut self, line: &str, header: &Header) -> Result<(), Error> {
+    pub fn fill_from_sam(&mut self, line: &str, header: &Header) -> io::Result<()> {
         let mut split = line.split('\t');
         self.set_name(split.try_next("record name (QNAME)")?.bytes());
         let flag = split.try_next("flag")?;
         let flag = flag.parse()
-            .map_err(|_| self.corrupt(format!("Cannot convert flag '{}' to int", flag)))?;
+            .map_err(|_| self.corrupt(&format!("Cannot convert flag '{}' to int", flag)))?;
         self.set_flag(flag);
 
         let rname = split.try_next("reference name")?;
@@ -489,26 +442,26 @@ impl Record {
             self.set_ref_id(-1);
         } else {
             let r_id = header.reference_id(rname).ok_or_else(||
-                self.corrupt(format!("Reference '{}' is not in the header", rname)))?;
+                self.corrupt(&format!("Reference '{}' is not in the header", rname)))?;
             self.set_ref_id(r_id as i32);
         }
 
         let start = split.try_next("start (POS)")?;
         let start = start.parse::<i32>()
-            .map_err(|_| self.corrupt(format!("Cannot convert POS '{}' to int", start)))? - 1;
+            .map_err(|_| self.corrupt(&format!("Cannot convert POS '{}' to int", start)))? - 1;
         if start < -1 {
-            return Err(self.corrupt("Start < -1".to_string()));
+            return Err(self.corrupt("Start < -1"));
         }
         self.set_start(start);
 
         let mapq = split.try_next("mapq")?;
         let mapq = mapq.parse()
-            .map_err(|_| self.corrupt(format!("Cannot convert MAPQ '{}' to int", mapq)))?;
+            .map_err(|_| self.corrupt(&format!("Cannot convert MAPQ '{}' to int", mapq)))?;
         self.set_mapq(mapq);
 
-        self.set_cigar(split.try_next("CIGAR")?.bytes()).map_err(|e| self.corrupt(e))?;
+        self.set_cigar(split.try_next("CIGAR")?.bytes()).map_err(|e| self.corrupt(&e))?;
         if self.flag().is_mapped() && self.cigar.len() == 0 {
-            return Err(self.corrupt("Mapped read has an empty CIGAR".to_string()));
+            return Err(self.corrupt("Mapped read has an empty CIGAR"));
         }
 
         let rnext = split.try_next("mate reference name (RNEXT)")?;
@@ -518,32 +471,31 @@ impl Record {
             self.set_mate_ref_id(self.ref_id);
         } else {
             let nr_id = header.reference_id(rnext).ok_or_else(||
-                self.corrupt(format!("Reference '{}' is not in the header", rnext)))?;
+                self.corrupt(&format!("Reference '{}' is not in the header", rnext)))?;
             self.set_mate_ref_id(nr_id as i32);
         }
 
         let mate_start = split.try_next("mate start (PNEXT)")?;
         let mate_start = mate_start.parse::<i32>().map_err(|_|
-            self.corrupt(format!("Cannot convert PNEXT '{}' to int", mate_start)))? - 1;
+            self.corrupt(&format!("Cannot convert PNEXT '{}' to int", mate_start)))? - 1;
         if mate_start < -1 {
-            return Err(self.corrupt("Mate start < -1".to_string()));
+            return Err(self.corrupt("Mate start < -1"));
         }
         self.set_mate_start(mate_start);
 
         let template_len = split.try_next("template length (TLEN)")?;
         let template_len = template_len.parse::<i32>().map_err(|_|
-            self.corrupt(format!("Cannot convert TLEN '{}' to int", template_len)))?;
+            self.corrupt(&format!("Cannot convert TLEN '{}' to int", template_len)))?;
         self.set_template_len(template_len);
 
         let seq = split.try_next("sequence")?;
         let qual = split.try_next("qualities")?;
         if seq == "*" {
-            self.set_seq_qual(std::iter::empty(), std::iter::empty()).map_err(|e| self.corrupt(e))?;
+            self.set_seq_qual(std::iter::empty(), std::iter::empty()).map_err(|e| self.corrupt(&e))?;
         } else if qual == "*" {
-            self.set_seq_qual(seq.bytes(), std::iter::empty()).map_err(|e| self.corrupt(e))?;
+            self.set_seq_qual(seq.bytes(), std::iter::empty()).map_err(|e| self.corrupt(&e))?;
         } else {
-            self.set_seq_qual(seq.bytes(), qual.bytes().map(|q| q - 33))
-                .map_err(|e| self.corrupt(e))?;
+            self.set_seq_qual(seq.bytes(), qual.bytes().map(|q| q - 33)).map_err(|e| self.corrupt(&e))?;
         }
 
         self.tags.clear();
@@ -554,27 +506,27 @@ impl Record {
     }
 
     /// Replace Cigar by CG tag if Cigar has placeholder *kSmN*.
-    fn replace_cigar_if_needed(&mut self) -> Result<(), Error> {
+    fn replace_cigar_if_needed(&mut self) -> io::Result<()> {
         if !self.cigar.is_empty() && self.cigar.at(0) ==
                 (self.seq.len() as u32, cigar::Operation::Soft) {
             if self.cigar.len() != 2 {
-                return Err(self.corrupt("Record contains invalid Cigar".to_string()));
+                return Err(self.corrupt("Record contains invalid Cigar"));
             }
             let (len, op) = self.cigar.at(1);
             if op != cigar::Operation::Skip {
-                return Err(self.corrupt("Record contains invalid Cigar".to_string()));
+                return Err(self.corrupt("Record contains invalid Cigar"));
             }
             self.end.set(self.start + len as i32);
 
             let cigar_arr = match self.tags.get(b"CG") {
                 Some(tags::TagValue::IntArray(array_view)) => {
                     if array_view.int_type() != tags::IntegerType::U32 {
-                        return Err(self.corrupt("CG tag has an incorrect type".to_string()));
+                        return Err(self.corrupt("CG tag has an incorrect type"));
                     }
                     array_view
                 },
                 _ => return Err(
-                    self.corrupt("Record should contain tag CG, but does not".to_string())),
+                    self.corrupt("Record should contain tag CG, but does not")),
             };
             self.cigar.clear();
             self.cigar.extend_from_raw(cigar_arr.iter().map(|el| el as u32));
@@ -736,8 +688,7 @@ impl Record {
             f.write_all(b"*\t")?;
         } else {
             write!(f, "{}\t", header.reference_name(self.ref_id as u32)
-                .ok_or_else(|| io::Error::new(InvalidData,
-                "Record has a reference id not in the header"))?)?;
+                .ok_or_else(|| io::Error::new(InvalidData, "Record has a reference id not in the header"))?)?;
         }
         write!(f, "{}\t{}\t", self.start + 1, self.mapq)?;
         self.cigar.write_readable(f)?;
@@ -748,8 +699,7 @@ impl Record {
             f.write_all(b"\t=\t")?;
         } else {
             write!(f, "\t{}\t", header.reference_name(self.mate_ref_id as u32)
-                .ok_or_else(|| io::Error::new(InvalidData,
-                "Record has a reference id not in the header"))?)?;
+                .ok_or_else(|| io::Error::new(InvalidData, "Record has a reference id not in the header"))?)?;
         }
         write!(f, "{}\t{}\t", self.mate_start + 1, self.template_len)?;
         self.seq.write_readable(f)?;

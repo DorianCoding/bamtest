@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::io;
 use std::cmp::min;
 
-use super::{Record, Error, RecordReader, Region};
+use super::{Record, RecordReader, Region};
 
 /// Record sequence and qualities matching a single reference position. It can be
 /// - `Nucleotide(nt: u8, qual: u8)`, where `nt` is a letter, like `b'A'`, and quality does not have +33 added.
@@ -265,7 +265,7 @@ pub struct Pileup<'r, R: RecordReader> {
     reader: &'r mut R,
     read_filter: Option<Box<dyn Fn(&Record) -> bool>>,
     records: Vec<PileupRecord>,
-    error: Option<Error>,
+    error: Option<io::Error>,
 
     ref_id: u32,
     ref_pos: u32,
@@ -319,15 +319,13 @@ impl<'r, R: RecordReader> Pileup<'r, R> {
                     let rec_start = record.start() as u32;
                     if rec_ref_id < self.last_ref_id
                             || (rec_ref_id == self.last_ref_id && rec_start < self.last_ref_pos) {
-                        self.error = Some(Error::Truncated(
-                            io::Error::new(io::ErrorKind::InvalidData, "Input file is unsorted")));
+                        self.error = Some(io::Error::new(io::ErrorKind::InvalidData, "Input file is unsorted"));
                         self.last_ref_id = std::u32::MAX;
                     }
                     self.last_ref_id = rec_ref_id;
                     self.last_ref_pos = rec_start;
                     self.records.push(PileupRecord::new(Rc::new(record)));
                 },
-                Some(Err(Error::NoMoreRecords)) => unreachable!("NoMoreRecords cannot be reached while using .next()"),
                 Some(Err(e)) => {
                     self.error = Some(e);
                     self.last_ref_id = std::u32::MAX;
@@ -339,7 +337,7 @@ impl<'r, R: RecordReader> Pileup<'r, R> {
 }
 
 impl<'r, R: RecordReader> Iterator for Pileup<'r, R> {
-    type Item = Result<PileupColumn, Error>;
+    type Item = io::Result<PileupColumn>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(e) = &self.error {

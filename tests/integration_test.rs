@@ -74,8 +74,8 @@ fn test_indexed_reader(path: &str, additional_threads: u16) {
         let mut viewer = reader.fetch(&bam::Region::new(ref_id as u32, start, end)).unwrap();
         loop {
             match viewer.read_into(&mut record) {
-                Ok(()) => {},
-                Err(bam::Error::NoMoreRecords) => break,
+                Ok(true) => {},
+                Ok(false) => break,
                 Err(e) => panic!("{}", e),
             }
             count += 1;
@@ -112,8 +112,8 @@ fn test_bam_reader(path: &str, additional_threads: u16) {
     let mut sam_writer = bam::SamWriter::from_path(&output1, reader.header().clone()).unwrap();
     loop {
         match reader.read_into(&mut record) {
-            Ok(()) => {},
-            Err(bam::Error::NoMoreRecords) => break,
+            Ok(true) => {},
+            Ok(false) => break,
             Err(e) => panic!("{}", e),
         }
         count += 1;
@@ -151,8 +151,8 @@ fn test_bam_to_bam(path: &str, additional_threads: u16) {
         .unwrap();
     loop {
         match reader.read_into(&mut record) {
-            Ok(()) => {},
-            Err(bam::Error::NoMoreRecords) => break,
+            Ok(true) => {},
+            Ok(false) => break,
             Err(e) => panic!("{}", e),
         }
         count += 1;
@@ -197,8 +197,8 @@ fn test_sam_to_bam(path: &str) {
         .unwrap();
     loop {
         match reader.read_into(&mut record) {
-            Ok(()) => {},
-            Err(bam::Error::NoMoreRecords) => break,
+            Ok(true) => {},
+            Ok(false) => break,
             Err(e) => panic!("{}", e),
         }
         count += 1;

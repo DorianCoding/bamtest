@@ -6,7 +6,7 @@ use std::mem;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
-use super::{Error, resize};
+use super::resize;
 
 /// Enum that represents tag type for the cases when a tag contains integer.
 ///
@@ -405,8 +405,7 @@ write_value_prim!(f32, b'f', write_f32);
 impl WriteValue for &str {
     fn write<W: Write>(&self, f: &mut W) -> io::Result<usize> {
         if self.bytes().any(|ch| ch == 0) {
-            return Err(io::Error::new(InvalidData,
-                "Cannot write tag value: String contains null"));
+            return Err(io::Error::new(InvalidData, "Cannot write tag value: String contains null"));
         }
         f.write_u8(b'Z')?;
         f.write_all(self.as_bytes())?;
@@ -517,21 +516,21 @@ pub struct TagViewer {
 }
 
 /// Get a size of type from letter (c -> 1), (i -> 4). Returns Error for non int/float types
-fn tag_type_size(ty: u8) -> Result<u32, Error> {
+fn tag_type_size(ty: u8) -> io::Result<u32> {
     match ty {
         b'c' | b'C' | b'A' => Ok(1),
         b's' | b'S' => Ok(2),
         b'i' | b'I' | b'f' => Ok(4),
-        _ => Err(Error::Corrupted(format!("Unexpected tag type: {}", ty as char))),
+        _ => Err(io::Error::new(InvalidData, format!("Corrupted record: Unexpected tag type: {}", ty as char))),
     }
 }
 
 /// Get the length of the first tag (including name) in a raw tags array.
 ///
 /// For example, the function would return 7 for the raw representation of `"AA:i:10    BB:i:20"`.
-fn get_length(raw_tags: &[u8]) -> Result<u32, Error> {
+fn get_length(raw_tags: &[u8]) -> io::Result<u32> {
     if raw_tags.len() < 4 {
-        return Err(Error::Corrupted("Truncated tags".to_string()));
+        return Err(io::Error::new(InvalidData, "Corrupted record: Truncated tags"));
     }
     let ty = raw_tags[2];
     match ty {
@@ -539,17 +538,16 @@ fn get_length(raw_tags: &[u8]) -> Result<u32, Error> {
             for i in 3..raw_tags.len() {
                 if raw_tags[i] == 0 {
                     if ty == b'H' && i % 2 != 0 {
-                        return Err(Error::Corrupted(
-                            "Hex tag has an odd number of bytes".to_string()));
+                        return Err(io::Error::new(InvalidData, "Corrupted record: Hex tag has an odd number of bytes"));
                     }
                     return Ok(1 + i as u32);
                 }
             }
-            Err(Error::Corrupted("Truncated tags".to_string()))
+            Err(io::Error::new(InvalidData, "Corrupted record: Truncated tags"))
         },
         b'B' => {
             if raw_tags.len() < 8 {
-                return Err(Error::Corrupted("Truncated tags".to_string()));
+                return Err(io::Error::new(InvalidData, "Corrupted record: Truncated tags"));
             }
             let arr_len = (&raw_tags[4..8]).read_i32::<LittleEndian>()? as u32;
             Ok(8 + tag_type_size(raw_tags[3])? * arr_len)
@@ -575,7 +573,7 @@ impl TagViewer {
         self.lengths.shrink_to_fit();
     }
 
-    pub(crate) fn fill_from<R: Read>(&mut self, stream: &mut R, length: usize) -> Result<(), Error> {
+    pub(crate) fn fill_from<R: Read>(&mut self, stream: &mut R, length: usize) -> io::Result<()> {
         unsafe {
             resize(&mut self.raw, length);
         }
@@ -588,7 +586,7 @@ impl TagViewer {
             sum_len += tag_len as usize;
         }
         if sum_len > self.raw.len() {
-            Err(Error::Corrupted("Truncated tags".to_string()))
+            Err(io::Error::new(InvalidData, "Corrupted record: Truncated tags"))
         } else {
             Ok(())
         }
