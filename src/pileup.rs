@@ -17,15 +17,104 @@ pub enum AlnType {
     Insertion(u32),
 }
 
-/// Pileup entry - single record that covers a reference position. Part of [pileup column](struct.PileupColumn.html).
+/// Single record that covers a reference position. Part of [pileup column](struct.PileupColumn.html).
 #[derive(Clone)]
 pub struct PileupEntry {
     record: Rc<Record>,
     query_start: u32,
     query_end: u32,
+    aln_query_end: u32,
+
+    ref_pos: u32,
+    cigar_index: usize,
+    cigar_remaining: u32,
 }
 
 impl PileupEntry {
+    /// Creates a new `PileupEntry` from a mapped `Record`.
+    fn new(record: Rc<Record>) -> Self {
+        let ref_pos = record.start();
+        assert!(ref_pos >= 0, "Pileup record cannot be unmapped");
+
+        let mut cigar_index = 0;
+        let mut query_pos = 0;
+        let cigar_remaining = loop {
+            let (len, op) = record.cigar().at(cigar_index);
+            if op.consumes_ref() {
+                break len;
+            }
+            if op.consumes_query() {
+                query_pos += len;
+            }
+            cigar_index += 1;
+        };
+        assert!(cigar_index < record.cigar().len(), "CIGAR cannot contain only insertions");
+        let aln_query_end = record.aligned_query_end();
+
+        let mut res = PileupEntry {
+            record,
+            query_start: query_pos,
+            query_end: query_pos,
+            aln_query_end,
+
+            ref_pos: ref_pos as u32,
+            cigar_index,
+            cigar_remaining,
+        };
+        res.update_query_end();
+        res
+    }
+
+    fn update_query_end(&mut self) {
+        let op = self.record.cigar().at(self.cigar_index).1;
+        self.query_end = if !op.consumes_query() {
+            self.query_start
+        } else if self.cigar_remaining == 1 {
+            let mut query_end = self.query_start + 1;
+            let mut i = self.cigar_index + 1;
+            while i < self.record.cigar().len() && query_end < self.aln_query_end {
+                let (len, op) = self.record.cigar().at(i);
+                if op.consumes_ref() {
+                    break;
+                } else if op.consumes_query() {
+                    query_end += len;
+                }
+                i += 1;
+            }
+            min(query_end, self.aln_query_end)
+        } else {
+            self.query_start + 1
+        };
+    }
+
+    /// Moves the record to the next reference position. Returns false if reached the end of the alignment.
+    fn move_forward(&mut self) -> bool {
+        let op = self.record.cigar().at(self.cigar_index).1;
+        self.cigar_remaining -= 1;
+        if op.consumes_ref() {
+            self.ref_pos += 1;
+        }
+        if op.consumes_query() {
+            self.query_start += 1;
+        }
+
+        while self.cigar_remaining == 0 {
+            self.cigar_index += 1;
+            if self.cigar_index == self.record.cigar().len() || self.query_start >= self.aln_query_end {
+                return false;
+            }
+            let (len, op) = self.record.cigar().at(self.cigar_index);
+            if op.consumes_ref() {
+                self.cigar_remaining = len;
+            } else if op.consumes_query() {
+                self.query_start += len;
+            }
+        }
+        self.update_query_end();
+        assert!(self.query_end <= self.aln_query_end);
+        true
+    }
+
     /// Returns the smart pointer to the [record](../record/struct.Record.html).
     pub fn record(&self) -> &Rc<Record> {
         &self.record
@@ -81,107 +170,10 @@ impl PileupEntry {
     }
 }
 
-struct PileupRecord {
-    record: Rc<Record>,
-    query_pos: u32,
-    aln_query_end: u32,
-
-    ref_pos: u32,
-    cigar_index: usize,
-    cigar_remaining: u32,
-}
-
-impl PileupRecord {
-    /// Creates a new PileupRecord from a mapped `Record`.
-    fn new(record: Rc<Record>) -> Self {
-        let ref_pos = record.start();
-        assert!(ref_pos >= 0, "Pileup record cannot be unmapped");
-
-        let mut cigar_index = 0;
-        let mut query_pos = 0;
-        let cigar_remaining = loop {
-            let (len, op) = record.cigar().at(cigar_index);
-            if op.consumes_ref() {
-                break len;
-            }
-            if op.consumes_query() {
-                query_pos += len;
-            }
-            cigar_index += 1;
-        };
-        assert!(cigar_index < record.cigar().len(), "CIGAR cannot contain only insertions");
-        let aln_query_end = record.aligned_query_end();
-
-        PileupRecord {
-            record,
-            query_pos,
-            aln_query_end,
-            ref_pos: ref_pos as u32,
-            cigar_index,
-            cigar_remaining,
-        }
-    }
-
-    fn to_entry(&self) -> PileupEntry {
-        let (_len, op) = self.record.cigar().at(self.cigar_index);
-        let query_end = if !op.consumes_query() {
-            self.query_pos
-        } else if self.cigar_remaining == 1 {
-            let mut query_end = self.query_pos + 1;
-            let mut i = self.cigar_index + 1;
-            while i < self.record.cigar().len() && query_end < self.aln_query_end {
-                let (len, op) = self.record.cigar().at(i);
-                if op.consumes_ref() {
-                    break;
-                } else if op.consumes_query() {
-                    query_end += len;
-                }
-                i += 1;
-            }
-            min(query_end, self.aln_query_end)
-        } else {
-            self.query_pos + 1
-        };
-
-        PileupEntry {
-            record: Rc::clone(&self.record),
-            query_start: self.query_pos,
-            query_end,
-        }
-    }
-
-    /// Moves the record to the next reference position. Returns false if reached the end of the alignment.
-    fn move_forward(&mut self) -> bool {
-        let (_len, op) = self.record.cigar().at(self.cigar_index);
-        self.cigar_remaining -= 1;
-        if op.consumes_ref() {
-            self.ref_pos += 1;
-        }
-        if op.consumes_query() {
-            self.query_pos += 1;
-        }
-
-        while self.cigar_remaining == 0 {
-            self.cigar_index += 1;
-            if self.cigar_index == self.record.cigar().len() || self.query_pos >= self.aln_query_end {
-                return false;
-            }
-            let (len, op) = self.record.cigar().at(self.cigar_index);
-            if op.consumes_ref() {
-                self.cigar_remaining = len;
-            } else if op.consumes_query() {
-                self.query_pos += len;
-            }
-        }
-        assert!(self.query_pos < self.aln_query_end);
-        true
-    }
-}
-
 pub struct Pileup<'a, I: Iterator<Item = io::Result<Record>>> {
     record_iter: &'a mut I,
     read_filter: Box<dyn Fn(&Record) -> bool>,
-    records: Vec<PileupRecord>,
+    entries: Vec<PileupEntry>,
     error: Option<io::Error>,
 
     last_ref_id: u32,
@@ -197,7 +189,7 @@ impl<'a, I: Iterator<Item = io::Result<Record>>> Pileup<'a, I> {
         let mut res = Pileup {
             record_iter,
             read_filter: Box::new(read_filter),
-            records: Vec::new(),
+            entries: Vec::new(),
             error: None,
             last_ref_id: 0,
             last_ref_pos: 0,
@@ -234,7 +226,7 @@ impl<'a, I: Iterator<Item = io::Result<Record>>> Pileup<'a, I> {
                     }
                     self.last_ref_id = rec_ref_id;
                     self.last_ref_pos = rec_start;
-                    self.records.push(PileupRecord::new(Rc::new(record)));
+                    self.entries.push(PileupEntry::new(Rc::new(record)));
                 },
                 Some(Err(e)) => {
                     self.error = Some(e);
@@ -251,21 +243,21 @@ impl<'a, R: RecordReader> Iterator for Pileup<'a, R> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.error.is_some() {
-            self.records.clear();
+            self.entries.clear();
             self.last_ref_id = std::u32::MAX;
             return Some(Err(self.error.take().unwrap()));
         }
 
         let mut new_ref_id = std::u32::MAX;
         let mut new_ref_pos = std::u32::MAX;
-        while new_ref_id == std::u32::MAX && (!self.records.is_empty() || self.last_ref_id < std::u32::MAX) {
-            for pil_rec in self.records.iter() {
-                let rec_ref_id = pil_rec.record.ref_id() as u32;
+        while new_ref_id == std::u32::MAX && (!self.entries.is_empty() || self.last_ref_id < std::u32::MAX) {
+            for entry in self.entries.iter() {
+                let rec_ref_id = entry.record.ref_id() as u32;
                 if rec_ref_id < new_ref_id {
                     new_ref_id = rec_ref_id;
-                    new_ref_pos = pil_rec.ref_pos;
+                    new_ref_pos = entry.ref_pos;
                 } else if rec_ref_id == new_ref_id {
-                    new_ref_pos = min(new_ref_pos, pil_rec.ref_pos);
+                    new_ref_pos = min(new_ref_pos, entry.ref_pos);
                 }
             }
 
@@ -275,24 +267,24 @@ impl<'a, R: RecordReader> Iterator for Pileup<'a, R> {
                 self.read_next();
             }
             if self.error.is_some() {
-                self.records.clear();
+                self.entries.clear();
                 self.last_ref_id = std::u32::MAX;
                 return Some(Err(self.error.take().unwrap()));
             }
         }
 
         let mut entries = Vec::new();
-        for i in (0..self.records.len()).rev() {
-            let pil_rec = &mut self.records[i];
-            let rec_ref_id = pil_rec.record.ref_id() as u32;
-            if rec_ref_id == new_ref_id && pil_rec.ref_pos == new_ref_pos {
-                entries.push(pil_rec.to_entry());
-                if !pil_rec.move_forward() {
-                    std::mem::drop(pil_rec);
-                    self.records.swap_remove(i);
+        for i in (0..self.entries.len()).rev() {
+            let entry = &mut self.entries[i];
+            let rec_ref_id = entry.record.ref_id() as u32;
+            if rec_ref_id == new_ref_id && entry.ref_pos == new_ref_pos {
+                entries.push(entry.clone());
+                if !entry.move_forward() {
+                    std::mem::drop(entry);
+                    self.entries.swap_remove(i);
                 }
             } else {
-                assert!(rec_ref_id > new_ref_id || pil_rec.ref_pos > new_ref_pos,
+                assert!(rec_ref_id > new_ref_id || entry.ref_pos > new_ref_pos,
                     "Record is to the left of the new pileup position");
             }
         }
