@@ -501,14 +501,18 @@ impl<R: Read + Seek> SeekReader<R> {
         self.contents_offset = 0;
     }
 
-    /// Sets the reader in a consecutive mode (starting with offset 0,
-    /// and continuing until the end of the stream).
+    /// Sets the reader in a consecutive mode starting with offset 0, and continuing until the end of the stream.
     ///
-    /// This function resets the current reading queue (from the previous `set_chunks` or
-    /// `make_consecutive` calls).
+    /// This function resets the current reading queue.
     pub fn make_consecutive(&mut self) {
-        self.reader.set_chunks(
-            vec![Chunk::new(VirtualOffset::from_raw(0), VirtualOffset::from_raw(std::u64::MAX))])
+        self.reader.set_chunks(vec![Chunk::new(VirtualOffset::MIN, VirtualOffset::MAX)])
+    }
+
+    /// Sets the reader in a consecutive mode starting with `offset`, and continuing until the end of the stream.
+    ///
+    /// This function resets the current reading queue.
+    pub fn from_offset(&mut self, offset: VirtualOffset) {
+        self.reader.set_chunks(vec![Chunk::new(offset, VirtualOffset::MAX)])
     }
 
     /// Consumes the reader and returns inner stream.

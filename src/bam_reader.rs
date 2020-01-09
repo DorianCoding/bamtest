@@ -446,6 +446,7 @@ pub struct BamReader<R: Read> {
 }
 
 impl BamReader<File> {
+    // TODO Replace with from_path_with_threads
     /// Creates BAM file reader from `path`.
     ///
     /// Additional threads are used to decompress bgzip blocks, while the

@@ -12,7 +12,7 @@ use std::cmp::{min, max};
 use byteorder::{LittleEndian, ReadBytesExt};
 
 /// Virtual offset. Represents `block_offset << 16 | contents_offset`, where
-/// `block_offset` is `u48` and represents the offset in the bgzip file to the beginning of th 
+/// `block_offset` is `u48` and represents the offset in the bgzip file to the beginning of the
 /// block (also known as `coffset` or `compressed_offset`).
 ///
 /// `contents_offset` is `u16` and represents offset in the uncompressed data in a single block
@@ -21,7 +21,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 pub struct VirtualOffset(u64);
 
 impl VirtualOffset {
-    /// Construct Virtual offset from raw value.
+    /// Construct virtual offset from raw value.
     pub fn from_raw(raw: u64) -> VirtualOffset {
         VirtualOffset(raw)
     }
@@ -30,22 +30,22 @@ impl VirtualOffset {
         Ok(VirtualOffset(stream.read_u64::<LittleEndian>()?))
     }
 
-    /// Construct Virtual offset from `block_offset` and `contents_offset`.
+    /// Constructs virtual offset from `block_offset` and `contents_offset`.
     pub fn new(block_offset: u64, contents_offset: u16) -> Self {
         VirtualOffset(block_offset << 16 | contents_offset as u64)
     }
 
-    /// Get the raw value.
+    /// Returns the raw value.
     pub fn raw(&self) -> u64 {
         self.0
     }
 
-    /// Get the block offset. Represents the offset in the Bgzip file to the beginning of the block.
+    /// Returns the block offset. Represents the offset in the Bgzip file to the beginning of the block.
     pub fn block_offset(&self) -> u64 {
         self.0 >> 16
     }
 
-    /// Get the contents offset. Represents the offset into the uncompressed contents of the block.
+    /// Represents the contents offset. Represents the offset into the uncompressed contents of the block.
     pub fn contents_offset(&self) -> u16 {
         self.0 as u16
     }
@@ -54,6 +54,11 @@ impl VirtualOffset {
     pub fn equal(&self, block_offset: u64, contents_offset: u16) -> bool {
         self.0 == (block_offset << 16 | contents_offset as u64)
     }
+
+    /// Minimal possible offset, same as `VirtualOffset::from_raw(0)`.
+    pub const MIN: VirtualOffset = VirtualOffset(0);
+    /// Maximal possible offset, same as `VirtualOffset::from_raw(std::u64::MAX)`.
+    pub const MAX: VirtualOffset = VirtualOffset(std::u64::MAX);
 }
 
 impl Display for VirtualOffset {
@@ -70,7 +75,7 @@ pub struct Chunk {
 }
 
 impl Chunk {
-    /// Construct a `Chunk` from two virtual offsets.
+    /// Constructs a `Chunk` from two virtual offsets.
     pub fn new(start: VirtualOffset, end: VirtualOffset) -> Self {
         Chunk { start, end }
     }
@@ -85,17 +90,17 @@ impl Chunk {
         }
     }
 
-    /// Check if two chunks intersect.
+    /// Checks if two chunks intersect.
     pub fn intersect(&self, other: &Chunk) -> bool {
         self.start < other.end && other.start < self.end
     }
 
-    /// Check if two chunks intersect or one of the chunks goes right after another.
+    /// Checks if two chunks intersect or one of the chunks goes right after another.
     pub fn can_combine(&self, other: &Chunk) -> bool {
         self.start <= other.end && other.start <= self.end
     }
 
-    /// Combine two intersecting chunks. Panics if chunks do not intersect.
+    /// Combines two intersecting chunks. Panics if chunks do not intersect.
     pub fn combine(&self, other: &Chunk) -> Chunk {
         Chunk {
             start: min(self.start, other.start),
@@ -103,10 +108,12 @@ impl Chunk {
         }
     }
 
+    /// Returns the start of the chunk.
     pub fn start(&self) -> VirtualOffset {
         self.start
     }
 
+    /// Returns the end of the chunk.
     pub fn end(&self) -> VirtualOffset {
         self.end
     }
@@ -133,10 +140,12 @@ struct Bin {
 impl Bin {
     fn from_stream<R: Read>(stream: &mut R) -> Result<Self> {
         let bin_id = stream.read_u32::<LittleEndian>()?;
-        let n_chunks = stream.read_i32::<LittleEndian>()?;
+        let n_chunks = stream.read_i32::<LittleEndian>()? as usize;
         let check_chunks = bin_id != SUMMARY_BIN;
-        let chunks = (0..n_chunks).map(|_| Chunk::from_stream(stream, check_chunks))
-            .collect::<Result<_>>()?;
+        let mut chunks = Vec::with_capacity(n_chunks);
+        for _ in 0..n_chunks {
+            chunks.push(Chunk::from_stream(stream, check_chunks)?);
+        }
         Ok(Bin { bin_id, chunks })
     }
 }
@@ -144,15 +153,18 @@ impl Bin {
 impl Display for Bin {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
         write!(f, "Bin {}:  ", self.bin_id)?;
-        self.chunks.iter().enumerate()
-            .map(|(i, chunk)| write!(f, "{}{}", if i > 0 { ",  " } else { "" }, chunk))
-            .collect::<result::Result<_, _>>()
+        for (i, chunk) in self.chunks.iter().enumerate() {
+            write!(f, "{}{}", if i > 0 { ",  " } else { "" }, chunk)?;
+        }
+        Ok(())
     }
 }
 
 #[derive(Clone)]
 struct Reference {
     bins: HashMap<u32, Bin>,
+    // Linear index: 16 kbp intervals.
+    intervals: Vec<VirtualOffset>,
 }
 
 /// Per BAM specification, bin with `bin_id == SUMMARY_BIN` contains summary over the reference.
@@ -160,29 +172,42 @@ const SUMMARY_BIN: u32 = 37450;
 
 impl Reference {
     fn from_stream<R: Read>(stream: &mut R) -> Result<Self> {
-        let n_bins = stream.read_i32::<LittleEndian>()?;
-        let bins = (0..n_bins).map(|_| {
+        let n_bins = stream.read_i32::<LittleEndian>()? as usize;
+        let mut bins = HashMap::with_capacity(n_bins);
+        for _ in 0..n_bins {
             let bin = Bin::from_stream(stream)?;
-            Ok((bin.bin_id, bin))
-        }).collect::<Result<_>>()?;
-        let n_intervals = stream.read_i32::<LittleEndian>()?;
-        // Linear index is not used in the current version
-        let mut intervals = vec![0_u64; n_intervals as usize];
-        stream.read_u64_into::<LittleEndian>(&mut intervals)?;
-        Ok(Reference { bins })
+            bins.insert(bin.bin_id, bin);
+        }
+
+        let n_intervals = stream.read_i32::<LittleEndian>()? as usize;
+        let mut intervals = Vec::with_capacity(n_intervals);
+        for _ in 0..n_intervals {
+            intervals.push(VirtualOffset::from_stream(stream)?);
+        }
+        Ok(Reference { bins, intervals })
     }
 }
 
 impl Display for Reference {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
-        writeln!(f, "    Bins:")?;
-        self.bins.values().map(|bin| writeln!(f, "        {}", bin))
-            .collect::<result::Result<_, _>>()
+        if !self.bins.is_empty() {
+            writeln!(f, "    Bins:")?;
+            for bin in self.bins.values() {
+                writeln!(f, "        {}", bin)?;
+            }
+        }
+        if !self.intervals.is_empty() {
+            writeln!(f, "    Linear index:")?;
+            write!(f, "      ")?;
+            for offset in self.intervals.iter() {
+                write!(f, "  {}", offset)?;
+            }
+        }
+        Ok(())
     }
 }
 
-/// BAI Index. Allows to get chunks in a bgzip file, that contain records from a specific genomic
-/// region.
+/// BAI Index. Allows to get chunks in a bgzip file, that contain records from a specific genomic region.
 #[derive(Clone)]
 pub struct Index {
     references: Vec<Reference>,
@@ -190,7 +215,7 @@ pub struct Index {
 }
 
 impl Index {
-    /// Load index from stream
+    /// Loads index from stream.
     pub fn from_stream<R: Read>(mut stream: R) -> Result<Index> {
         let mut magic = [0_u8; 4];
         stream.read_exact(&mut magic)?;
@@ -198,21 +223,22 @@ impl Index {
             return Err(Error::new(InvalidData, "Input is not in BAI format"));
         }
 
-        let n_ref = stream.read_i32::<LittleEndian>()?;
-        let references = (0..n_ref).map(|_| Reference::from_stream(&mut stream))
-            .collect::<Result<_>>()?;
+        let n_ref = stream.read_i32::<LittleEndian>()? as usize;
+        let mut references = Vec::with_capacity(n_ref);
+        for _ in 0..n_ref {
+            references.push(Reference::from_stream(&mut stream)?);
+        }
         let n_unmapped = stream.read_u64::<LittleEndian>().ok();
         Ok(Index { references, n_unmapped })
     }
 
-    /// Load index from path
+    /// Loads index from path.
     pub fn from_path<P: AsRef<Path>>(path: P) -> Result<Index> {
         let f = File::open(&path)?;
         Index::from_stream(f)
     }
 
-    /// For a given region the function returns [chunks](struct.Chunk.html) of BAM file that
-    /// contain all records in the region.
+    /// Fetches [chunks](struct.Chunk.html) of the BAM file that contain all records for a given region.
     pub fn fetch_chunks(&self, ref_id: u32, start: i32, end: i32) -> Vec<Chunk> {
         let mut chunks = Vec::new();
         for bin_id in region_to_bins(start, end).into_iter() {
@@ -237,6 +263,18 @@ impl Index {
         }
         res.push(curr);
         res
+    }
+
+    /// Returns the offset to the start of the data, if the index is not empty.
+    pub fn data_start(&self) -> Option<VirtualOffset> {
+        for (i, reference) in self.references.iter().enumerate() {
+            if reference.intervals.is_empty() {
+                assert!(reference.bins.is_empty(), "BAI Index contiains bins for reference {}, but no linear index", i);
+                continue;
+            }
+            return Some(reference.intervals[0]);
+        }
+        None
     }
 }
 
@@ -267,6 +305,7 @@ pub fn region_to_bin(beg: i32, end: i32) -> u32 {
     res as u32
 }
 
+// TODO Replace with Iterator.
 /// Returns all possible BAI bins for the region `[beg-end)`.
 pub fn region_to_bins(beg: i32, end: i32) -> Vec<u32> {
     let end = end - 1;
@@ -281,10 +320,10 @@ pub fn region_to_bins(beg: i32, end: i32) -> Vec<u32> {
     res
 }
 
-/// Maximal possible bin value
+/// Maximal possible bin value.
 pub const MAX_BIN: u16 = 37448;
 
-/// Returns a maximal region for a given bin
+/// Returns a maximal region for a given bin.
 pub fn bin_to_region(bin: u16) -> (i32, i32) {
     if bin == 0 {
         return (std::i32::MIN, std::i32::MAX);
