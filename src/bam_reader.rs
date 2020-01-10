@@ -397,6 +397,29 @@ impl<R: Read + Seek> IndexedReader<R> {
         })
     }
 
+    /// Returns an iterator over records from the start of the BAM file.
+    pub fn full<'a>(&'a mut self) -> RegionViewer<'a, bgzip::SeekReader<R>> {
+        self.full_by(|_| true)
+    }
+
+    /// Returns an iterator over records from the start of the BAM file.
+    ///
+    /// Records will be filtered by `predicate`.
+    /// In that case some records will be removed without allocating new memory.
+    pub fn full_by<'a, F>(&'a mut self, predicate: F) -> RegionViewer<'a, bgzip::SeekReader<R>>
+    where F: 'static + Fn(&record::Record) -> bool
+    {
+        if let Some(offset) = self.index.data_start() {
+            self.reader.set_chunks(vec![index::Chunk::new(offset, index::VirtualOffset::MAX)]);
+        }
+        RegionViewer {
+            reader: &mut self.reader,
+            start: std::i32::MIN,
+            end: std::i32::MAX,
+            predicate: Box::new(predicate),
+        }
+    }
+
     /// Returns [header](../header/struct.Header.html).
     pub fn header(&self) -> &Header {
         &self.header
