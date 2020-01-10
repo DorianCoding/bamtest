@@ -122,6 +122,7 @@ pub use header::Header;
 pub use record::Record;
 pub use sam::SamWriter;
 pub use sam::SamReader;
+pub use pileup::Pileup;
 
 use std::io;
 

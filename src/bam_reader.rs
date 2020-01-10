@@ -336,8 +336,6 @@ impl Region {
 ///     .from_path("in.bam").unwrap();
 /// ```
 /// You can also ignore the error completely: `.modification_time(ModificationTime::Ignore)`.
-
-// TODO: IndexedReader::fetch_full
 pub struct IndexedReader<R: Read + Seek> {
     reader: bgzip::SeekReader<R>,
     header: Header,
@@ -469,7 +467,6 @@ pub struct BamReader<R: Read> {
 }
 
 impl BamReader<File> {
-    // TODO Replace with from_path_with_threads
     /// Creates BAM file reader from `path`.
     ///
     /// Additional threads are used to decompress bgzip blocks, while the

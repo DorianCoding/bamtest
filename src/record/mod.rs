@@ -435,10 +435,6 @@ impl Record {
             - seq_len - qual_len;
         self.tags.fill_from(stream, remaining_size)?;
         self.replace_cigar_if_needed()?;
-
-        if self.flag().is_mapped() == (self.ref_id == -1) {
-            return Err(self.corrupt("Record (flag & 0x4) and ref_id do not match"));
-        }
         Ok(true)
     }
 
