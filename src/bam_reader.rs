@@ -32,9 +32,6 @@ impl<'a, R: Read> RecordReader for RegionViewer<'a, R> {
                 record.clear();
                 return res;
             }
-            if !record.flag().is_mapped() {
-                continue;
-            }
             // Reads are sorted, so no more reads would be in the region.
             if record.start() >= self.end {
                 record.clear();
