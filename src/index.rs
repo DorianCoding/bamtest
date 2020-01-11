@@ -305,20 +305,51 @@ pub fn region_to_bin(beg: i32, end: i32) -> u32 {
     res as u32
 }
 
-// TODO Replace with Iterator.
 /// Returns all possible BAI bins for the region `[beg-end)`.
-pub fn region_to_bins(beg: i32, end: i32) -> Vec<u32> {
-    let end = end - 1;
-    let mut res = vec![0];
-    let mut t = 0;
-    for i in 0..5 {
-        t += 1 << (i * 3);
-        let start = (t + (beg >> 26 - 3 * i)) as u32;
-        let end = (t + (end >> 26 - 3 * i)) as u32;
-        res.extend(start..=end);
+pub fn region_to_bins(start: i32, end: i32) -> BinsIter {
+    BinsIter {
+        i: -1,
+        t: 0,
+        start,
+        end,
+        curr_bin: 0,
+        bins_end: 0,
     }
-    res
 }
+
+/// Iterator over bins.
+pub struct BinsIter {
+    i: i32,
+    t: i32,
+    start: i32,
+    end: i32,
+    curr_bin: u32,
+    bins_end: u32,
+}
+
+impl Iterator for BinsIter {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.curr_bin == self.bins_end {
+            if self.i >= 4 {
+                return None;
+            }
+            self.i += 1;
+            self.t += 1 << (self.i * 3);
+            self.curr_bin = (self.t + (self.start >> 26 - 3 * self.i)) as u32 - 1;
+            self.bins_end = (self.t + (self.end >> 26 - 3 * self.i)) as u32;
+
+            if self.i == 0 {
+                return Some(0);
+            }
+        }
+        self.curr_bin += 1;
+        Some(self.curr_bin)
+    }
+}
+
+impl std::iter::FusedIterator for BinsIter {}
 
 /// Maximal possible bin value.
 pub const MAX_BIN: u16 = 37448;
