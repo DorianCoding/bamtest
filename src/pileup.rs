@@ -1,22 +1,10 @@
 //! SAM/BAM files pileup: iterator over reference positions.
 //!
-//! For any kind of reader you can construct [Pileup](struct.Pileup.html) using
-//! [new](struct.Pileup.html#method.new) or [with_filter](struct.Pileup.html#method.with_filter),
-//! and iterate over columns.
-//! ```
-//! let mut reader = bam::BamReader::from_path("in.bam", 0).unwrap();
-//! for column in bam::Pileup::with_filter(&mut reader, |record| record.flag().no_bits(1796)) {
-//!     let column = column.unwrap();
-//!     println!("Column at {}:{}, {} records", column.ref_id(),
-//!         column.ref_pos() + 1, column.entries().len());
-//!
-//!     for entry in column.entries().iter() {
-//!         let seq = entry.sequence().unwrap().map(|nt| nt as char).collect::<Vec<_>>();
-//!         let qual = entry.qualities().unwrap().iter().map(|q| (q + 33) as char).collect::<Vec<_>>();
-//!         println!("    {:?}: {:?}, {:?}", entry.record(), seq, qual);
-//!     }
-//! }
-//! ```
+//! Contains three main structures:
+//! * [Pileup](struct.Pileup.html), which allows to iterate over pileup columns,
+//! * [Pileup column](struct.PileupColumn.html) - contains information about all records that overlap a certain
+//! reference position,
+//! * [Pileup entry](struct.PileupEntry.html) - a single record that overlaps a certain reference position.
 
 use std::rc::Rc;
 use std::io;
@@ -37,7 +25,8 @@ pub enum AlnType {
     Insertion(u32),
 }
 
-/// Single record that covers a reference position. Part of a [pileup column](struct.PileupColumn.html).
+/// Single record that covers a [reference position](#method.ref_pos).
+/// Part of a [pileup column](struct.PileupColumn.html).
 #[derive(Clone)]
 pub struct PileupEntry {
     record: Rc<Record>,
@@ -135,32 +124,34 @@ impl PileupEntry {
         true
     }
 
-    /// Returns the smart pointer to the [record](../record/struct.Record.html).
+    /// Returns a smart pointer to the [record](../record/struct.Record.html).
     pub fn record(&self) -> &Rc<Record> {
         &self.record
     }
 
-    /// Returns 0-based index of the first base aligned to the reference position.
+    /// Returns 0-based index of the first base aligned to the [reference position](#method.ref_pos).
     /// If the position is deleted in the record, the function returns the index of the last aligned base before
     /// the reference position.
     pub fn query_start(&self) -> u32 {
         self.query_start
     }
 
-    /// Returns 0-based index after the last base aligned to the reference position.
+    /// Returns 0-based index after the last base aligned to the [reference position](#method.ref_pos).
     /// If the position is deleted in the record, the function returns the index of the last aligned base before
     /// the reference position. In that case query_start is the same as query_end.
     pub fn query_end(&self) -> u32 {
         self.query_end
     }
 
-    /// Returns the size of the record sequence aligned to the reference position
+    
+    /// Returns the size of the record sequence aligned to the [reference position](#method.ref_pos).
     /// (same as `query_end() - query_start()`).
     pub fn len(&self) -> u32 {
         self.query_end - self.query_start
     }
-
-    /// Returns the type of the region aligned to the reference position (deletion, match or insertion).
+    
+    /// Returns the type of the region aligned to the [reference position](#method.ref_pos)
+    /// (deletion, match or insertion).
     pub fn aln_type(&self) -> AlnType {
         match self.len() {
             0 => AlnType::Deletion,
@@ -169,7 +160,12 @@ impl PileupEntry {
         }
     }
 
-    /// Returns an iterator over nucleotides in the region aligned to the reference position,
+    /// Returns the current reference position.
+    pub fn ref_pos(&self) -> u32 {
+        self.ref_pos
+    }
+
+    /// Returns an iterator over nucleotides in the region aligned to the [reference position](#method.ref_pos),
     /// if the sequence is present in the record.
     pub fn sequence(&self) -> Option<super::record::sequence::SubseqIter> {
         if self.record.sequence().available() {
@@ -179,7 +175,7 @@ impl PileupEntry {
         }
     }
 
-    /// Returns raw qualities (without +33) in the region aligned to the reference position,
+    /// Returns raw qualities (without +33) in the region aligned to the [reference position](#method.ref_pos),
     /// if the qualities are present in the record.
     pub fn qualities(&self) -> Option<&[u8]> {
         if self.record.qualities().available() {
@@ -189,12 +185,13 @@ impl PileupEntry {
         }
     }
 
-    /// Returns true if the record alignment starts at the reference position.
+    /// Returns true if the record alignment starts at the [reference position](#method.ref_pos).
     pub fn is_aln_start(&self) -> bool {
         self.ref_pos == self.record.start() as u32
     }
 
-    /// Returns true if the record alignment ends at the reference position (it is the last aligned position).
+    /// Returns true if the record alignment ends at the [reference position](#method.ref_pos)
+    /// (it is the last aligned position).
     pub fn is_aln_end(&self) -> bool {
         self.query_end == self.aln_query_end
     }
@@ -213,6 +210,27 @@ impl PileupEntry {
 
 /// Iterator over [pileup columns](struct.PileupColumn.html), each column stores all records covering a single
 /// reference position.
+///
+/// For any kind of reader you can construct [Pileup](struct.Pileup.html) using
+/// [new](struct.Pileup.html#method.new) or [with_filter](struct.Pileup.html#method.with_filter),
+/// and iterate over [columns](struct.PileupColumn.html).
+/// ```
+/// let mut reader = bam::BamReader::from_path("in.bam", 0).unwrap();
+/// for column in bam::Pileup::with_filter(&mut reader, |record| record.flag().no_bits(1796)) {
+///     let column = column.unwrap();
+///     println!("Column at {}:{}, {} records", column.ref_id(),
+///         column.ref_pos() + 1, column.entries().len());
+///
+///     for entry in column.entries().iter() {
+///         let seq: Vec<_> = entry.sequence().unwrap()
+///             .map(|nt| nt as char).collect();
+///         let qual: Vec<_> = entry.qualities().unwrap().iter()
+///             .map(|q| (q + 33) as char).collect();
+///         println!("    {:?}: {:?}, {:?}", entry.record(), seq, qual);
+///     }
+/// }
+/// ```
+
 pub struct Pileup<'a, I: Iterator<Item = io::Result<Record>>> {
     record_iter: &'a mut I,
     read_filter: Box<dyn Fn(&Record) -> bool>,
@@ -224,7 +242,7 @@ pub struct Pileup<'a, I: Iterator<Item = io::Result<Record>>> {
 }
 
 impl<'a, I: Iterator<Item = io::Result<Record>>> Pileup<'a, I> {
-    /// Creates a pileup from an iterator over `io::Result<Record>`.
+    /// Creates a pileup from an iterator over `io::Result<Record>`. Note, that records should be sorted.
     ///
     /// You can create a pileup from [BAM reader](../bam_reader/struct.BamReader.html),
     /// [SAM reader](../sam/struct.SamReader.html), or from
@@ -235,7 +253,7 @@ impl<'a, I: Iterator<Item = io::Result<Record>>> Pileup<'a, I> {
     }
 
     /// Creates a pileup from an iterator over `io::Result<Record>`. Same as calling [new](#method.new),
-    /// but only using records that pass the `read_filter`.
+    /// however the pileup will be constructed from records that pass the `read_filter`.
     pub fn with_filter<F: 'static + Fn(&Record) -> bool>(record_iter: &'a mut I, read_filter: F) -> Self {
         let mut res = Pileup {
             record_iter,

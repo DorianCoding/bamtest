@@ -326,6 +326,9 @@ impl Region {
 ///     .from_path("in.bam").unwrap();
 /// ```
 ///
+/// To read all records from an indexed BAM file you can use methods
+/// [full](#method.full) and [full_by](#method.full_by). You can safely call `fetch` and `full` methods in any order.
+///
 /// By default, during the construction of the `IndexedReader`, we compare modification times of
 /// the BAI index and the BAM file. If the index is older, the function returns an error. This can
 /// be changed:

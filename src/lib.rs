@@ -13,6 +13,8 @@
 //!
 //! BAM readers and writers have single-thread and multi-thread modes.
 //!
+//! You can construct pileups from all readers using [Pileup](pileup/struct.Pileup.html).
+//!
 //! The [bgzip](bgzip/index.html) module to interact directly with bgzip files (BGZF).
 //!
 //! The crate also allows to conviniently work with SAM/BAM [records](record/struct.Record.html)
