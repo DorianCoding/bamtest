@@ -57,9 +57,7 @@ You can find more detailed usage [here](https://docs.rs/bam).
 You can find changelog [here](https://gitlab.com/tprodanov/bam/-/releases).
 
 ## Future versions
-* Iterating over unmapped reads for `IndexedReader`,
-* Support for linear index for extremely long records,
-* Constructing pileup.
+* Iterating over unmapped reads for `IndexedReader`.
 
 ## Issues
 Please submit issues [here](https://gitlab.com/tprodanov/bam/issues) or send them to

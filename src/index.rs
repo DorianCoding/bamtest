@@ -131,8 +131,9 @@ impl Display for Chunk {
     }
 }
 
+/// Single bin that stores chunks within the BAM file.
 #[derive(Clone)]
-struct Bin {
+pub struct Bin {
     bin_id: u32,
     chunks: Vec<Chunk>,
 }
@@ -148,6 +149,16 @@ impl Bin {
         }
         Ok(Bin { bin_id, chunks })
     }
+
+    /// Returns the bin ID.
+    pub fn bin_id(&self) -> u32 {
+        self.bin_id
+    }
+
+    /// Returns all the chunks in the bin.
+    pub fn chunks(&self) -> &[Chunk] {
+        &self.chunks
+    }
 }
 
 impl Display for Bin {
@@ -160,11 +171,79 @@ impl Display for Bin {
     }
 }
 
+const WINDOW_SIZE: u32 = 16384;
+
+/// Stores linear index: for each tiling 16384bp window it stores the smallest file offset of an alignment
+/// that overlaps it.
 #[derive(Clone)]
-struct Reference {
+pub struct LinearIndex {
+    /// each element stores the index and offset of the first interval with such offset.
+    intervals: Vec<(u32, VirtualOffset)>,
+}
+
+impl LinearIndex {
+    fn from_stream<R: Read>(stream: &mut R) -> Result<Self> {
+        let n_intervals = stream.read_i32::<LittleEndian>()? as u32;
+        let mut intervals = Vec::new();
+        for i in 0..n_intervals {
+            let offset = VirtualOffset::from_stream(stream)?;
+            match intervals.last() {
+                Some((_, prev_offset)) if *prev_offset == offset => {},
+                _ => intervals.push((i, offset)),
+            }
+        }
+        Ok(LinearIndex { intervals })
+    }
+
+    /// Returns true if the linear index is empty.
+    pub fn is_empty(&self) -> bool {
+        self.intervals.is_empty()
+    }
+
+    /// Returns the first offset. Panics, if the index is empty.
+    pub fn smallest_offset(&self) -> VirtualOffset {
+        self.intervals[0].1
+    }
+
+    /// Returns a slice where each element represents
+    /// a first window with a specific offset in form of `(index, offset)`.
+    pub fn intervals(&self) -> &[(u32, VirtualOffset)] {
+        &self.intervals
+    }
+
+    /// Retuns an offset *x*, such that for a region with genomic coordinates [start-end)
+    /// we only need to visit chunks with end offset > *x*.
+    pub fn min_end_offset(&self, start: i32) -> VirtualOffset {
+        let start_index = if start < 0 {
+            0
+        } else {
+            start as u32 / WINDOW_SIZE
+        };
+        match self.intervals.binary_search_by(|(index, _)| index.cmp(&start_index)) {
+            Ok(i) => self.intervals[i].1,
+            Err(0) => VirtualOffset::MIN,
+            Err(i) => self.intervals[i - 1].1
+        }
+    }
+}
+
+impl Display for LinearIndex {
+    fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
+        for (i, (index, offset)) in self.intervals.iter().enumerate() {
+            if i > 0 {
+                write!(f, ";  ")?;
+            }
+            write!(f, "window {}: {}", index, offset)?;
+        }
+        Ok(())
+    }
+}
+
+/// Index for a single reference sequence. Contains [bins](struct.Bin.html) and a linear index.
+#[derive(Clone)]
+pub struct Reference {
     bins: HashMap<u32, Bin>,
-    // Linear index: 16 kbp intervals.
-    intervals: Vec<VirtualOffset>,
+    linear_index: LinearIndex,
 }
 
 /// Per BAM specification, bin with `bin_id == SUMMARY_BIN` contains summary over the reference.
@@ -179,12 +258,18 @@ impl Reference {
             bins.insert(bin.bin_id, bin);
         }
 
-        let n_intervals = stream.read_i32::<LittleEndian>()? as usize;
-        let mut intervals = Vec::with_capacity(n_intervals);
-        for _ in 0..n_intervals {
-            intervals.push(VirtualOffset::from_stream(stream)?);
-        }
-        Ok(Reference { bins, intervals })
+        let linear_index = LinearIndex::from_stream(stream)?;
+        Ok(Reference { bins, linear_index })
+    }
+
+    /// Returns all bins for the reference.
+    pub fn bins(&self) -> &HashMap<u32, Bin> {
+        &self.bins
+    }
+
+    /// Returns linear index.
+    pub fn linear_index(&self) -> &LinearIndex {
+        &self.linear_index
     }
 }
 
@@ -196,12 +281,9 @@ impl Display for Reference {
                 writeln!(f, "        {}", bin)?;
             }
         }
-        if !self.intervals.is_empty() {
+        if !self.linear_index.is_empty() {
             writeln!(f, "    Linear index:")?;
-            write!(f, "      ")?;
-            for offset in self.intervals.iter() {
-                write!(f, "  {}", offset)?;
-            }
+            writeln!(f, "        {}", self.linear_index)?;
         }
         Ok(())
     }
@@ -241,9 +323,12 @@ impl Index {
     /// Fetches [chunks](struct.Chunk.html) of the BAM file that contain all records for a given region.
     pub fn fetch_chunks(&self, ref_id: u32, start: i32, end: i32) -> Vec<Chunk> {
         let mut chunks = Vec::new();
-        for bin_id in region_to_bins(start, end).into_iter() {
-            if let Some(bin) = self.references[ref_id as usize].bins.get(&bin_id) {
-                chunks.extend(bin.chunks.iter());
+        let ref_id = ref_id as usize;
+
+        let min_end_offset = self.references[ref_id].linear_index.min_end_offset(start);
+        for bin_id in region_to_bins(start, end) {
+            if let Some(bin) = self.references[ref_id].bins.get(&bin_id) {
+                chunks.extend(bin.chunks.iter().filter(|chunk| chunk.end() > min_end_offset));
             }
         }
         let mut res = Vec::new();
@@ -268,13 +353,23 @@ impl Index {
     /// Returns the offset to the start of the data, if the index is not empty.
     pub fn data_start(&self) -> Option<VirtualOffset> {
         for (i, reference) in self.references.iter().enumerate() {
-            if reference.intervals.is_empty() {
+            if reference.linear_index.is_empty() {
                 assert!(reference.bins.is_empty(), "BAI Index contiains bins for reference {}, but no linear index", i);
                 continue;
             }
-            return Some(reference.intervals[0]);
+            return Some(reference.linear_index.smallest_offset());
         }
         None
+    }
+
+    /// Returns all [references](struct.Reference.html) present in the BAI index.
+    pub fn references(&self) -> &[Reference] {
+        &self.references
+    }
+
+    /// Returns the number of unmapped records, if present in the index.
+    pub fn n_unmapped(&self) -> Option<u64> {
+        self.n_unmapped
     }
 }
 

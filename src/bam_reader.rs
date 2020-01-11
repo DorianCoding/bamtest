@@ -425,6 +425,11 @@ impl<R: Read + Seek> IndexedReader<R> {
     pub fn header(&self) -> &Header {
         &self.header
     }
+
+    /// Returns [BAI index](../index/struct.Index.html).
+    pub fn index(&self) -> &Index {
+        &self.index
+    }
 }
 
 /// BAM file reader. In contrast to [IndexedReader](struct.IndexedReader.html) the `BamReader`
