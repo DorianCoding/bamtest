@@ -19,6 +19,8 @@ random genomic regions.
 
 BAM readers and writers have single-thread and multi-thread modes.
 
+You can construct pileups from all readers using `Pileup`.
+
 You can use `bgzip` module to interact directly with bgzip files (BGZF).
 
 The crate also allows to conviniently work with SAM/BAM `records`
