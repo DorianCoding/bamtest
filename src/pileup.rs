@@ -43,8 +43,6 @@ impl PileupEntry {
     /// Creates a new `PileupEntry` from a mapped `Record`.
     fn new(record: Rc<Record>) -> Self {
         let ref_pos = record.start();
-        assert!(ref_pos >= 0, "Pileup record cannot be unmapped");
-
         let mut cigar_index = 0;
         let mut query_pos = 0;
         let cigar_remaining = loop {

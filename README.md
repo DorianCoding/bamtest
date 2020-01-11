@@ -56,9 +56,6 @@ You can find more detailed usage [here](https://docs.rs/bam).
 ## Changelog
 You can find changelog [here](https://gitlab.com/tprodanov/bam/-/releases).
 
-## Future versions
-* Iterating over unmapped reads for `IndexedReader`.
-
 ## Issues
 Please submit issues [here](https://gitlab.com/tprodanov/bam/issues) or send them to
 `timofey.prodanov[at]gmail.com`.

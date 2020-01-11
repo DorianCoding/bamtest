@@ -324,7 +324,11 @@ impl Region {
 /// ```
 ///
 /// To read all records from an indexed BAM file you can use methods
-/// [full](#method.full) and [full_by](#method.full_by). You can safely call `fetch` and `full` methods in any order.
+/// [full](#method.full) and [full_by](#method.full_by).
+///
+/// To fetch unmapped records from an indexed BAM file you can use methods
+/// [unmapped](#method.unmapped) and [unmapped_by](#method.unmapped_by).
+/// You can safely call `fetch`, `full` and `unmapped` in any order.
 ///
 /// By default, during the construction of the `IndexedReader`, we compare modification times of
 /// the BAI index and the BAM file. If the index is older, the function returns an error. This can
@@ -395,25 +399,46 @@ impl<R: Read + Seek> IndexedReader<R> {
         })
     }
 
-    /// Returns an iterator over records from the start of the BAM file.
+    /// Returns an iterator over all records from the start of the BAM file.
     pub fn full<'a>(&'a mut self) -> RegionViewer<'a, bgzip::SeekReader<R>> {
         self.full_by(|_| true)
     }
 
-    /// Returns an iterator over records from the start of the BAM file.
+    /// Returns an iterator over all records from the start of the BAM file.
     ///
-    /// Records will be filtered by `predicate`.
-    /// In that case some records will be removed without allocating new memory.
+    /// Records will be filtered by `predicate`, which allows to skip some records without allocating new memory.
     pub fn full_by<'a, F>(&'a mut self, predicate: F) -> RegionViewer<'a, bgzip::SeekReader<R>>
     where F: 'static + Fn(&record::Record) -> bool
     {
-        if let Some(offset) = self.index.data_start() {
+        if let Some(offset) = self.index.start_offset() {
             self.reader.set_chunks(vec![index::Chunk::new(offset, index::VirtualOffset::MAX)]);
         }
         RegionViewer {
             reader: &mut self.reader,
             start: std::i32::MIN,
             end: std::i32::MAX,
+            predicate: Box::new(predicate),
+        }
+    }
+
+    /// Returns an iterator over unmapped records at the end of the BAM file.
+    pub fn unmapped<'a>(&'a mut self) -> RegionViewer<'a, bgzip::SeekReader<R>> {
+        self.unmapped_by(|_| true)
+    }
+
+    /// Returns an iterator over unmapped records at the end of the BAM file.
+    ///
+    /// Records will be filtered by `predicate`, which allows to skip some records without allocating new memory.
+    pub fn unmapped_by<'a, F>(&'a mut self, predicate: F) -> RegionViewer<'a, bgzip::SeekReader<R>>
+    where F: 'static + Fn(&record::Record) -> bool
+    {
+        if let Some(offset) = self.index.end_offset() {
+            self.reader.set_chunks(vec![index::Chunk::new(offset, index::VirtualOffset::MAX)]);
+        }
+        RegionViewer {
+            reader: &mut self.reader,
+            start: -1,
+            end: 0,
             predicate: Box::new(predicate),
         }
     }

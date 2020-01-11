@@ -144,8 +144,11 @@ impl Bin {
         let n_chunks = stream.read_i32::<LittleEndian>()? as usize;
         let check_chunks = bin_id != SUMMARY_BIN;
         let mut chunks = Vec::with_capacity(n_chunks);
-        for _ in 0..n_chunks {
+        for i in 0..n_chunks {
             chunks.push(Chunk::from_stream(stream, check_chunks)?);
+            if check_chunks && i > 0 && chunks[i].start() < chunks[i - 1].end() {
+                return Err(Error::new(InvalidData, format!("Invalid index: chunks are not sorted for bin {}", bin_id)));
+            }
         }
         Ok(Bin { bin_id, chunks })
     }
@@ -271,6 +274,27 @@ impl Reference {
     pub fn linear_index(&self) -> &LinearIndex {
         &self.linear_index
     }
+
+    /// Returns the maximal end offset. Panics, if the reference is empty.
+    pub fn max_end_offset(&self) -> VirtualOffset {
+        let mut max_offset = match self.bins.get(&0) {
+            Some(bin) => bin.chunks[bin.chunks.len() - 1].end(),
+            None => VirtualOffset::MIN,
+        };
+
+        let mut t = 0;
+        for i in 0..5 {
+            t += 1 << (i * 3);
+            let next_t = t + (1 << (3 + i * 3));
+            for bin_id in (t..next_t).rev() {
+                if let Some(bin) = self.bins.get(&bin_id) {
+                    max_offset = max(max_offset, bin.chunks[bin.chunks.len() - 1].end());
+                    break;
+                }
+            }
+        }
+        max_offset
+    }
 }
 
 impl Display for Reference {
@@ -351,13 +375,24 @@ impl Index {
     }
 
     /// Returns the offset to the start of the data, if the index is not empty.
-    pub fn data_start(&self) -> Option<VirtualOffset> {
+    pub fn start_offset(&self) -> Option<VirtualOffset> {
         for (i, reference) in self.references.iter().enumerate() {
             if reference.linear_index.is_empty() {
                 assert!(reference.bins.is_empty(), "BAI Index contiains bins for reference {}, but no linear index", i);
                 continue;
             }
             return Some(reference.linear_index.smallest_offset());
+        }
+        None
+    }
+
+    /// Returns the offset of the end of all mapped records, if the index is not empty.
+    /// Takes at most 37448 bins lookups.
+    pub fn end_offset(&self) -> Option<VirtualOffset> {
+        for reference in self.references.iter().rev() {
+            if !reference.bins.is_empty() {
+                return Some(reference.max_end_offset());
+            }
         }
         None
     }
@@ -381,8 +416,8 @@ impl Display for Index {
         }
         write!(f, "Unmapped records: ")?;
         match self.n_unmapped {
-            Some(count) => writeln!(f, "{}", count),
-            None => writeln!(f, "Unknown")
+            Some(count) => write!(f, "{}", count),
+            None => write!(f, "Unknown")
         }
     }
 }
