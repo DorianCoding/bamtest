@@ -5,7 +5,7 @@ use std::fs::File;
 use std::process::Command;
 use std::time::Instant;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rand::Rng;
 use glob::glob;
@@ -57,7 +57,11 @@ fn test_indexed_reader(path: &str, additional_threads: u16) {
 
     let output1 = format!("tests/data/tmp/bamcrate.ind_reader_t{}.sam", additional_threads);
     let output2 = format!("tests/data/tmp/samtools.ind_reader_t{}.sam", additional_threads);
-    for i in 0..ITERATIONS {
+    let mut non_empty = 0;
+    for i in 0..10 * ITERATIONS {
+        if non_empty == ITERATIONS {
+            break;
+        }
         let ref_id = rng.gen_range(0, header.n_references());
         let length = header.reference_len(ref_id as u32).unwrap();
         let start = rng.gen_range(0, length);
@@ -97,6 +101,9 @@ fn test_indexed_reader(path: &str, additional_threads: u16) {
         println!("        samtools view:      {:?}", timer.elapsed());
         println!("        total {} records", count);
         compare_sam_files(&output1, &output2);
+        if count > 0 {
+            non_empty += 1;
+        }
     }
 }
 
@@ -222,10 +229,25 @@ fn test_sam_to_bam(path: &str) {
     compare_sam_files(&output1, &path);
 }
 
+fn sam_files() -> impl Iterator<Item = PathBuf> {
+    glob("tests/data/*.sam").unwrap().map(glob::GlobResult::unwrap)
+}
+
+// Consecutive BAM reader: c_*.bam and b_*.bam
+// Indexed BAM reader:     i_*.bam and b_*.bam
+
+fn bam_files() -> impl Iterator<Item = PathBuf> {
+    glob("tests/data/[cb]_*.bam").unwrap().map(glob::GlobResult::unwrap)
+}
+
+fn indexed_bam_files() -> impl Iterator<Item = PathBuf> {
+    glob("tests/data/[ib]_*.bam").unwrap().map(glob::GlobResult::unwrap)
+        .filter(|path| Path::new(&format!("{}.bai", path.display())).is_file())
+}
+
 #[test]
 fn indexed_reader_singlethread() {
-    for entry in glob("tests/data/iread*.bam").unwrap() {
-        let entry = entry.unwrap();
+    for entry in indexed_bam_files() {
         println!("Analyzing {}", entry.display());
         let entry_str = entry.as_os_str().to_str().unwrap();
         test_indexed_reader(entry_str, 0);
@@ -234,8 +256,7 @@ fn indexed_reader_singlethread() {
 
 #[test]
 fn bam_reader_singlethread() {
-    for entry in glob("tests/data/read*.bam").unwrap() {
-        let entry = entry.unwrap();
+    for entry in bam_files() {
         println!("Analyzing {}", entry.display());
         let entry_str = entry.as_os_str().to_str().unwrap();
         test_bam_reader(entry_str, 0);
@@ -244,8 +265,7 @@ fn bam_reader_singlethread() {
 
 #[test]
 fn bam_to_bam_singlethread() {
-    for entry in glob("tests/data/read*.bam").unwrap() {
-        let entry = entry.unwrap();
+    for entry in bam_files() {
         println!("Analyzing {}", entry.display());
         let entry_str = entry.as_os_str().to_str().unwrap();
         test_bam_to_bam(entry_str, 0);
@@ -254,8 +274,7 @@ fn bam_to_bam_singlethread() {
 
 #[test]
 fn sam_to_bam() {
-    for entry in glob("tests/data/read*.sam").unwrap() {
-        let entry = entry.unwrap();
+    for entry in sam_files() {
         println!("Analyzing {}", entry.display());
         let entry_str = entry.as_os_str().to_str().unwrap();
         test_sam_to_bam(entry_str);
@@ -264,8 +283,7 @@ fn sam_to_bam() {
 
 #[test]
 fn indexed_reader_multithread() {
-    for entry in glob("tests/data/iread*.bam").unwrap() {
-        let entry = entry.unwrap();
+    for entry in indexed_bam_files() {
         println!("Analyzing {}", entry.display());
         let entry_str = entry.as_os_str().to_str().unwrap();
         test_indexed_reader(entry_str, 2);
@@ -274,8 +292,7 @@ fn indexed_reader_multithread() {
 
 #[test]
 fn bam_reader_multithread() {
-    for entry in glob("tests/data/read*.bam").unwrap() {
-        let entry = entry.unwrap();
+    for entry in bam_files() {
         println!("Analyzing {}", entry.display());
         let entry_str = entry.as_os_str().to_str().unwrap();
         test_bam_reader(entry_str, 2);
@@ -284,8 +301,7 @@ fn bam_reader_multithread() {
 
 #[test]
 fn bam_to_bam_multithread() {
-    for entry in glob("tests/data/read*.bam").unwrap() {
-        let entry = entry.unwrap();
+    for entry in bam_files() {
         println!("Analyzing {}", entry.display());
         let entry_str = entry.as_os_str().to_str().unwrap();
         test_bam_to_bam(entry_str, 2);

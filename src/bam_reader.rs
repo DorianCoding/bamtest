@@ -51,11 +51,15 @@ impl<'a, R: Read> RecordReader for RegionViewer<'a, R> {
             }
 
             let record_end = record.calculate_end();
-            if record_end != -1 && record_end < record.start() {
+            if record.flag().is_mapped() && record_end < record.start() {
                 record.clear();
                 return Err(Error::new(InvalidData, "Corrupted record: aln_end < aln_start"));
             }
-            if record_end > self.start {
+            if record.flag().is_mapped() {
+                if record_end > self.start {
+                    return Ok(true);
+                }
+            } else if record.start() >= self.start {
                 return Ok(true);
             }
         }

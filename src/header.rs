@@ -386,10 +386,13 @@ impl Header {
                 "BAM file corrupted: negative number of references"));
         }
         let n_refs = n_refs as usize;
-        if n_refs != header.ref_names.len() {
+        let no_header_refs = header.ref_names.len() == 0;
+        if !no_header_refs && n_refs != header.ref_names.len() {
             return Err(Error::new(InvalidData,
-                "BAM file corrupted: number of references does not match header text"));
+                format!("BAM file corrupted: number of references does not match header text ({} != {})",
+                n_refs, header.ref_names.len())));
         }
+
         for i in 0..n_refs {
             let l_name = stream.read_i32::<LittleEndian>()?;
             if l_name <= 0 {
@@ -402,21 +405,20 @@ impl Header {
             let name = std::string::String::from_utf8(name)
                 .map_err(|_| Error::new(InvalidData,
                     "BAM file corrupted: reference name not in UTF-8"))?;
-            if name != header.ref_names[i] {
-                return Err(Error::new(InvalidData,
-                    format!("BAM file corrupted: reference #{}: header text name: {},\
-                        BAM references name: {}", i, header.ref_names[i], name)));
-            }
 
             let l_ref = stream.read_i32::<LittleEndian>()?;
             if l_ref < 0 {
                 return Err(Error::new(InvalidData,
                     "BAM file corrupted: negative reference length"));
             }
-            if l_ref as u32 != header.ref_lengths[i] {
+
+            if no_header_refs {
+                header.push_entry(HeaderEntry::ref_sequence(name, l_ref as u32))
+                    .map_err(|e| Error::new(InvalidData, e))?;
+            } else if name != header.ref_names[i] || l_ref as u32 != header.ref_lengths[i] {
                 return Err(Error::new(InvalidData,
-                    format!("BAM file corrupted: reference #{}: header text length: {},\
-                        BAM references length: {}", i, header.ref_lengths[i], l_ref)));
+                    format!("BAM file corrupted: plain text header does not match the list of BAM references: \
+                    reference #{}: ({}, {}) != ({}, {})", i, header.ref_names[i], name, l_ref, header.ref_lengths[i])));
             }
         }
         Ok(header)

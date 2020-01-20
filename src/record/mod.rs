@@ -237,6 +237,12 @@ impl Flag {
     }
 }
 
+impl fmt::Display for Flag {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "Flag({})", self.0)
+    }
+}
+
 pub(crate) unsafe fn resize<T>(v: &mut Vec<T>, new_len: usize) {
     if v.capacity() < new_len {
         v.reserve(new_len - v.len());
