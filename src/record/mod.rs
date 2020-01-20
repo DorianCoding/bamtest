@@ -475,7 +475,12 @@ impl Record {
             .map_err(|_| self.corrupt(&format!("Cannot convert MAPQ '{}' to int", mapq)))?;
         self.set_mapq(mapq);
 
-        self.set_cigar(split.try_next("CIGAR")?.bytes()).map_err(|e| self.corrupt(&e))?;
+        let cigar = split.try_next("CIGAR")?;
+        if cigar == "*" {
+            self.set_raw_cigar(std::iter::empty());
+        } else {
+            self.set_cigar(cigar.bytes()).map_err(|e| self.corrupt(&e))?;
+        }
         if self.flag().is_mapped() && self.cigar.len() == 0 {
             return Err(self.corrupt("Mapped read has an empty CIGAR"));
         }
@@ -923,7 +928,7 @@ impl Record {
         Ok(())
     }
 
-    /// Sets record cigar. This resets end position and BAI bin.
+    /// Sets record cigar from u8 iterator. This resets end position and BAI bin.
     pub fn set_cigar<I: IntoIterator<Item = u8>>(&mut self, cigar: I) -> Result<(), String> {
         self.end.set(0);
         self.bin.set(BIN_UNKNOWN);
