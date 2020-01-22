@@ -966,8 +966,8 @@ impl Record {
 
 impl fmt::Debug for Record {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{} (len {}) aligned to {}:{}-{}",
+        write!(f, "{} (len {}) aligned to [{}]:{}-{}",
             std::str::from_utf8(&self.name).expect("Record name not in UTF-8"), self.query_len(),
-            self.ref_id(), self.start(), self.calculate_end())
+            self.ref_id(), self.start() + 1, self.calculate_end())
     }
 }

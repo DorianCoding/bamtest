@@ -405,9 +405,9 @@ impl<T: ReadBlock> DecompressBlock<T> for MultiThread {
         self.was_error = true;
         match self.working_queue.lock() {
             Ok(mut guard) => {
-                let old_tasks = std::mem::replace(&mut guard.tasks, VecDeque::new());
-                for task in old_tasks.into_iter() {
-                    match task {
+                guard.blocks.clear();
+                for _ in 0..guard.tasks.len() {
+                    match guard.tasks.pop_front().unwrap() {
                         Task::Ready(block, _) => self.blocks_pool.bring(block),
                         Task::NotReady(worker_id, _) => guard.tasks.push_back(
                             Task::NotReady(worker_id, TaskStatus::Interrupted)),
