@@ -103,6 +103,18 @@ impl<W: Write> BamWriter<W> {
     pub fn take_stream(self) -> W {
         self.writer.take_stream()
     }
+
+
+    /// Pauses multi-thread writer until the next write operation. Does nothing to a single-thread writer.
+    ///
+    /// Use with caution: pausing and unpausing itself takes some time. Additionally, blocks that are compressed
+    /// at the moment will finish compressing, but will not be written.
+    /// All other blocks in the queue will not be compressed nor written.
+    ///
+    /// To compress and write all remaining blocks call [flush](#method.flush) before calling `pause`.
+    pub fn pause(&mut self) {
+        self.writer.pause();
+    }
 }
 
 impl<W: Write> RecordWriter for BamWriter<W> {

@@ -42,13 +42,13 @@ struct WorkingQueue {
 struct Worker {
     worker_id: WorkerId,
     working_queue: Weak<Mutex<WorkingQueue>>,
-    is_finished: Arc<AtomicBool>,
+    finish: Arc<AtomicBool>,
     compression: flate2::Compression,
 }
 
 impl Worker {
-    fn run(&mut self) {
-        'outer: while !self.is_finished.load(Relaxed) {
+    fn run(self) -> Self {
+        'outer: while !self.finish.load(Relaxed) {
             let queue = match self.working_queue.upgrade() {
                 Some(value) => value,
                 // Writer was dropped.
@@ -114,6 +114,7 @@ impl Worker {
                 break
             };
         }
+        self
     }
 }
 
@@ -130,6 +131,8 @@ trait CompressionQueue<W: Write> {
     /// Flush contents to strem. Multi-thread writer would wait until all blocks are compressed
     /// unless it encounters an error.
     fn flush(&mut self, stream: &mut W) -> io::Result<()>;
+
+    fn pause(&mut self);
 }
 
 struct SingleThread {
@@ -170,13 +173,15 @@ impl<W: Write> CompressionQueue<W> for SingleThread {
     fn flush(&mut self, stream: &mut W) -> io::Result<()> {
         stream.flush()
     }
+
+    fn pause(&mut self) {}
 }
 
 struct MultiThread {
     working_queue: Arc<Mutex<WorkingQueue>>,
-    is_finished: Arc<AtomicBool>,
+    finish: Arc<AtomicBool>,
     blocks_pool: ObjectPool<Block>,
-    _workers: Vec<thread::JoinHandle<()>>,
+    worker_handles: Vec<thread::JoinHandle<Worker>>,
 }
 
 impl MultiThread {
@@ -184,30 +189,49 @@ impl MultiThread {
     fn new(threads: u16, compression: flate2::Compression) -> Self {
         assert!(threads > 0);
         let working_queue = Arc::new(Mutex::new(WorkingQueue::default()));
-        let is_finished = Arc::new(AtomicBool::new(false));
-        let workers = (0..threads).map(|i| {
-            let mut worker = Worker {
+        let finish = Arc::new(AtomicBool::new(false));
+        let worker_handles = (0..threads).map(|i| {
+            let worker = Worker {
                 worker_id: WorkerId(i),
                 working_queue: Arc::downgrade(&working_queue),
-                is_finished: Arc::clone(&is_finished),
+                finish: Arc::clone(&finish),
                 compression,
             };
             thread::Builder::new()
                 .name(format!("bgzip_write{}", i + 1))
-                .spawn(move || worker.run())
+                .spawn(|| worker.run())
                 .expect("Cannot create a thread")
         }).collect();
 
         Self {
             working_queue,
-            is_finished,
+            finish,
             blocks_pool: ObjectPool::new(|| Block::new()),
-            _workers: workers,
+            worker_handles,
         }
     }
 
-    fn write_compressed<W: Write>(&mut self, stream: &mut W, stop_if_not_ready: bool)
-            -> io::Result<()> {
+    fn restart_workers(&mut self) {
+        if !self.finish.load(Relaxed) {
+            return;
+        }
+        let workers = self.worker_handles.drain(..).map(|thread| thread.join())
+            .collect::<Result<Vec<Worker>, _>>()
+            .unwrap_or_else(|e| panic!("Panic in one of the threads: {:?}", e));
+        self.finish.store(false, Relaxed);
+        for worker in workers {
+            self.worker_handles.push(thread::Builder::new()
+                .name(format!("bgzip_write{}", worker.worker_id.0 + 1))
+                .spawn(|| worker.run())
+                .expect("Cannot create a thread"));
+        }
+    }
+
+    fn write_compressed<W: Write>(&mut self, stream: &mut W, stop_if_not_ready: bool) -> io::Result<()> {
+        if self.finish.load(Relaxed) {
+            self.restart_workers();
+        }
+
         let mut time_waited = Duration::new(0, 0);
         loop {
             let queue_top = if let Ok(mut guard) = self.working_queue.lock() {
@@ -280,11 +304,15 @@ impl<W: Write> CompressionQueue<W> for MultiThread {
         self.write_compressed(stream, false)?;
         stream.flush()
     }
+
+    fn pause(&mut self) {
+        self.finish.store(true, Relaxed);
+    }
 }
 
 impl Drop for MultiThread {
     fn drop(&mut self) {
-        self.is_finished.store(true, Relaxed);
+        self.finish.store(true, Relaxed);
     }
 }
 
@@ -404,8 +432,17 @@ impl Writer<File> {
     /// Opens a writer from a file with default parameters
     /// (see [Writer Builder](struct.WriterBuilder.html)).
     pub fn from_path<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        WriterBuilder::new()
-            .from_path(path)
+        WriterBuilder::new().from_path(path)
+    }
+}
+
+impl<W: Write> Writer<W> {
+    /// Pauses multi-thread writer this  and does nothing for single-thread writer.
+    ///
+    /// Practically, this function increases sleeping time for compressing threads, so the threads are still active,
+    /// but wake up rarely.
+    pub fn pause(&mut self) {
+        self.compressor.pause();
     }
 }
 
