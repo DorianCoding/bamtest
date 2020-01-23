@@ -22,7 +22,7 @@ use std::cmp::{min, max};
 
 use crate::index::{Chunk, VirtualOffset};
 use super::{Block, BlockError, ObjectPool};
-use super::{SLEEP_TIME, TIMEOUT};
+use super::{SLEEP_TIME, PAUSE_SLEEP_TIME, TIMEOUT};
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 struct WorkerId(u16);
@@ -58,12 +58,17 @@ struct WorkingQueue {
 struct Worker {
     worker_id: WorkerId,
     working_queue: Weak<Mutex<WorkingQueue>>,
-    is_finished: Arc<AtomicBool>,
+    finish: Arc<AtomicBool>,
+    pause: Arc<AtomicBool>,
 }
 
 impl Worker {
     fn run(&mut self) {
-        'outer: while !self.is_finished.load(Relaxed) {
+        'outer: while !self.finish.load(Relaxed) {
+            if self.pause.load(Relaxed) {
+                thread::sleep(PAUSE_SLEEP_TIME);
+                continue;
+            }
             let queue = match self.working_queue.upgrade() {
                 Some(value) => value,
                 // Reader was dropped
@@ -231,6 +236,7 @@ trait DecompressBlock<T: ReadBlock> {
     fn decompress_next(&mut self, reader: &mut T) -> Result<&Block, BlockError>;
     fn get_current(&self) -> Option<&Block>;
     fn reset_queue(&mut self);
+    fn pause(&mut self);
 }
 
 struct SingleThread {
@@ -265,11 +271,14 @@ impl<T: ReadBlock> DecompressBlock<T> for SingleThread {
     }
 
     fn reset_queue(&mut self) {}
+
+    fn pause(&mut self) {}
 }
 
 struct MultiThread {
     working_queue: Arc<Mutex<WorkingQueue>>,
-    is_finished: Arc<AtomicBool>,
+    finish: Arc<AtomicBool>,
+    pause: Arc<AtomicBool>,
     blocks_pool: ObjectPool<Block>,
     workers: Vec<thread::JoinHandle<()>>,
     reached_end: bool,
@@ -282,12 +291,14 @@ impl MultiThread {
     fn new(threads: u16) -> Self {
         assert!(threads > 0);
         let working_queue = Arc::new(Mutex::new(WorkingQueue::default()));
-        let is_finished = Arc::new(AtomicBool::new(false));
+        let finish = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
         let workers = (0..threads).map(|i| {
             let mut worker = Worker {
                 worker_id: WorkerId(i),
                 working_queue: Arc::downgrade(&working_queue),
-                is_finished: Arc::clone(&is_finished),
+                finish: Arc::clone(&finish),
+                pause: Arc::clone(&pause),
             };
             thread::Builder::new()
                 .name(format!("bgzip_read{}", i + 1))
@@ -297,7 +308,8 @@ impl MultiThread {
 
         Self {
             working_queue,
-            is_finished,
+            finish,
+            pause,
             blocks_pool: ObjectPool::new(|| Block::new()),
             workers,
             reached_end: false,
@@ -309,6 +321,7 @@ impl MultiThread {
 
 impl<T: ReadBlock> DecompressBlock<T> for MultiThread {
     fn decompress_next(&mut self, reader: &mut T) -> Result<&Block, BlockError> {
+        self.pause.store(false, Relaxed);
         self.was_error = true;
         let blocks_to_read = if self.reached_end {
             0
@@ -418,11 +431,15 @@ impl<T: ReadBlock> DecompressBlock<T> for MultiThread {
             Err(e) => panic!("Panic in one of the threads: {:?}", e),
         }
     }
+
+    fn pause(&mut self) {
+        self.pause.store(true, Relaxed);
+    }
 }
 
 impl Drop for MultiThread {
     fn drop(&mut self) {
-        self.is_finished.store(true, Relaxed);
+        self.finish.store(true, Relaxed);
     }
 }
 
@@ -437,6 +454,12 @@ pub trait ReadBgzip {
 
     /// Returns the current block, if possible, and does not advance the stream.
     fn current(&self) -> Option<&Block>;
+
+    /// Pauses multi-thread reader this  and does nothing for single-thread reader.
+    ///
+    /// Practically, this function increases sleeping time for decompressing threads, so the threads are still active,
+    /// but wake up rarely.
+    fn pause(&mut self);
 }
 
 /// A bgzip reader, that allows to jump between blocks.
@@ -540,6 +563,10 @@ impl<R: Read + Seek> ReadBgzip for SeekReader<R> {
     fn current(&self) -> Option<&Block> {
         self.decompressor.get_current()
     }
+
+    fn pause(&mut self) {
+        self.decompressor.pause()
+    }
 }
 
 impl<R: Read + Seek> Read for SeekReader<R> {
@@ -562,7 +589,7 @@ impl<R: Read + Seek> Read for SeekReader<R> {
             let contents_end = if block_offset < end_offset.block_offset() {
                 block.uncompressed_size() as usize
             } else {
-                debug_assert!(block_offset == end_offset.block_offset());
+                assert!(block_offset == end_offset.block_offset());
                 end_offset.contents_offset() as usize
             };
             if self.contents_offset < contents_end {
@@ -652,6 +679,10 @@ impl<R: Read> ReadBgzip for ConsecutiveReader<R> {
 
     fn current(&self) -> Option<&Block> {
         self.decompressor.get_current()
+    }
+
+    fn pause(&mut self) {
+        self.decompressor.pause()
     }
 }
 

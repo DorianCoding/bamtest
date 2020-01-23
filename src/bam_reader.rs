@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use super::index::{self, Index};
 use super::record;
-use super::bgzip;
+use super::bgzip::{self, ReadBgzip};
 use super::header::Header;
 use super::RecordReader;
 
@@ -63,6 +63,13 @@ impl<'a, R: Read> RecordReader for RegionViewer<'a, R> {
                 return Ok(true);
             }
         }
+    }
+}
+
+impl<'a, R: Read + ReadBgzip> RegionViewer<'a, R> {
+    /// Pauses multi-thread reader until the next read operation. Does nothing to a single-thread reader.
+    pub fn pause(&mut self) {
+        self.reader.pause();
     }
 }
 
@@ -456,6 +463,11 @@ impl<R: Read + Seek> IndexedReader<R> {
     pub fn index(&self) -> &Index {
         &self.index
     }
+
+    /// Pauses multi-thread reader until the next read operation. Does nothing to a single-thread reader.
+    pub fn pause(&mut self) {
+        self.reader.pause();
+    }
 }
 
 /// BAM file reader. In contrast to [IndexedReader](struct.IndexedReader.html) the `BamReader`
@@ -526,6 +538,11 @@ impl<R: Read> BamReader<R> {
     /// Returns [header](../header/struct.Header.html).
     pub fn header(&self) -> &Header {
         &self.header
+    }
+
+    /// Pauses multi-thread reader until the next read operation. Does nothing to a single-thread reader.
+    pub fn pause(&mut self) {
+        self.reader.pause();
     }
 }
 

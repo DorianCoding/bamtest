@@ -195,6 +195,7 @@ impl LinearIndex {
                 _ => intervals.push((i, offset)),
             }
         }
+        intervals.shrink_to_fit();
         Ok(LinearIndex { intervals })
     }
 

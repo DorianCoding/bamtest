@@ -459,6 +459,7 @@ impl<T> ObjectPool<T> {
 }
 
 const SLEEP_TIME: Duration = Duration::from_nanos(50);
+const PAUSE_SLEEP_TIME: Duration = Duration::from_nanos(1000);
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 pub use read::{SeekReader, ConsecutiveReader, ReadBgzip};
