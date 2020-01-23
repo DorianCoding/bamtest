@@ -73,8 +73,7 @@ fn test_indexed_reader(path: &str, additional_threads: u16) {
         println!("    Fetching {}:{}-{}", ref_name, start + 1, end);
 
         let timer = Instant::now();
-        let mut sam_writer = bam::SamWriter::from_path(&output1, header.clone())
-            .unwrap();
+        let mut sam_writer = bam::SamWriter::from_path(&output1, header.clone()).unwrap();
         let mut viewer = reader.fetch(&bam::Region::new(ref_id as u32, start, end)).unwrap();
         loop {
             match viewer.read_into(&mut record) {
@@ -275,8 +274,7 @@ fn test_sam_to_bam(path: &str) {
     let bam_output = format!("tests/data/tmp/bamcrate.sam_to_bam.bam");
     let output1 = format!("tests/data/tmp/bamcrate.sam_to_bam.sam");
     let timer = Instant::now();
-    let mut bam_writer = bam::BamWriter::from_path(&bam_output, reader.header().clone())
-        .unwrap();
+    let mut bam_writer = bam::BamWriter::from_path(&bam_output, reader.header().clone()).unwrap();
     loop {
         match reader.read_into(&mut record) {
             Ok(true) => {},

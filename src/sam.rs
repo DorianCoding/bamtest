@@ -213,6 +213,9 @@ impl<R: BufRead> RecordReader for SamReader<R> {
             Err(e) => res.or(Err(e)),
         }
     }
+
+    /// Does nothing, as SAM readers are single-thread.
+    fn pause(&mut self) {}
 }
 
 /// Iterator over records.

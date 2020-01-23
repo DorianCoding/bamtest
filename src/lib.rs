@@ -158,6 +158,9 @@ pub trait RecordReader: Iterator<Item = io::Result<Record>> {
     ///
     /// If the function returns an error, the record is cleared.
     fn read_into(&mut self, record: &mut Record) -> io::Result<bool>;
+
+    /// Pauses multi-thread reader until the next read operation. Does nothing to a single-thread reader.
+    fn pause(&mut self);
 }
 
 /// A trait for writing BAM/SAM records.

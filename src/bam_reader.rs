@@ -17,17 +17,29 @@ use super::RecordReader;
 /// If possible, create a single record using [Record::new](../record/struct.Record.html#method.new)
 /// and then use [read_into](../trait.RecordReader.html#method.read_into) instead of iterating,
 /// as it saves time on allocation.
-pub struct RegionViewer<'a, R: Read> {
-    reader: &'a mut R,
+pub struct RegionViewer<'a, R: Read + Seek> {
+    parent: &'a mut IndexedReader<R>,
     start: i32,
     end: i32,
     predicate: Box<dyn Fn(&record::Record) -> bool>,
 }
 
-impl<'a, R: Read> RecordReader for RegionViewer<'a, R> {
+impl<'a, R: Read + Seek> RegionViewer<'a, R> {
+    /// Returns [header](../header/struct.Header.html).
+    pub fn header(&self) -> &Header {
+        self.parent.header()
+    }
+
+    /// Returns [BAI index](../index/struct.Index.html).
+    pub fn index(&self) -> &Index {
+        self.parent.index()
+    }
+}
+
+impl<'a, R: Read + Seek> RecordReader for RegionViewer<'a, R> {
     fn read_into(&mut self, record: &mut record::Record) -> Result<bool> {
         loop {
-            let res = record.fill_from_bam(&mut self.reader);
+            let res = record.fill_from_bam(&mut self.parent.reader);
             if !res.as_ref().unwrap_or(&false) {
                 record.clear();
                 return res;
@@ -64,17 +76,14 @@ impl<'a, R: Read> RecordReader for RegionViewer<'a, R> {
             }
         }
     }
-}
 
-impl<'a, R: Read + ReadBgzip> RegionViewer<'a, R> {
-    /// Pauses multi-thread reader until the next read operation. Does nothing to a single-thread reader.
-    pub fn pause(&mut self) {
-        self.reader.pause();
+    fn pause(&mut self) {
+        self.parent.pause();
     }
 }
 
 /// Iterator over records.
-impl<'a, R: Read> Iterator for RegionViewer<'a, R> {
+impl<'a, R: Read + Seek> Iterator for RegionViewer<'a, R> {
     type Item = Result<record::Record>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -196,7 +205,7 @@ impl IndexedReaderBuilder {
     /// Creates a new [IndexedReader](struct.IndexedReader.html) from two streams.
     /// BAM stream should support random access, while BAI stream does not need to.
     /// `check_time` and `bai_path` values are ignored.
-    pub fn from_streams<R: Seek + Read, T: Read>(&self, bam_stream: R, bai_stream: T)
+    pub fn from_streams<R: Read + Seek, T: Read>(&self, bam_stream: R, bai_stream: T)
             -> Result<IndexedReader<R>> {
         let reader = bgzip::SeekReader::from_stream(bam_stream, self.additional_threads)
             .map_err(|e| Error::new(e.kind(), format!("Failed to read BAM stream: {}", e)))?;
@@ -379,7 +388,7 @@ impl<R: Read + Seek> IndexedReader<R> {
     }
 
     /// Returns an iterator over records aligned to the [reference region](struct.Region.html).
-    pub fn fetch<'a>(&'a mut self, region: &Region) -> Result<RegionViewer<'a, bgzip::SeekReader<R>>> {
+    pub fn fetch<'a>(&'a mut self, region: &Region) -> Result<RegionViewer<'a, R>> {
         self.fetch_by(region, |_| true)
     }
 
@@ -388,8 +397,7 @@ impl<R: Read + Seek> IndexedReader<R> {
     /// Records will be filtered by `predicate`. It helps to slightly reduce fetching time,
     /// as some records will be removed without allocating new memory and without calculating
     /// alignment length.
-    pub fn fetch_by<'a, F>(&'a mut self, region: &Region, predicate: F)
-        -> Result<RegionViewer<'a, bgzip::SeekReader<R>>>
+    pub fn fetch_by<'a, F>(&'a mut self, region: &Region, predicate: F) -> Result<RegionViewer<'a, R>>
     where F: 'static + Fn(&record::Record) -> bool
     {
         match self.header.reference_len(region.ref_id()) {
@@ -403,7 +411,7 @@ impl<R: Read + Seek> IndexedReader<R> {
         let chunks = self.index.fetch_chunks(region.ref_id(), region.start() as i32, region.end() as i32);
         self.reader.set_chunks(chunks);
         Ok(RegionViewer {
-            reader: &mut self.reader,
+            parent: self,
             start: region.start() as i32,
             end: region.end() as i32,
             predicate: Box::new(predicate),
@@ -411,21 +419,21 @@ impl<R: Read + Seek> IndexedReader<R> {
     }
 
     /// Returns an iterator over all records from the start of the BAM file.
-    pub fn full<'a>(&'a mut self) -> RegionViewer<'a, bgzip::SeekReader<R>> {
+    pub fn full<'a>(&'a mut self) -> RegionViewer<'a, R> {
         self.full_by(|_| true)
     }
 
     /// Returns an iterator over all records from the start of the BAM file.
     ///
     /// Records will be filtered by `predicate`, which allows to skip some records without allocating new memory.
-    pub fn full_by<'a, F>(&'a mut self, predicate: F) -> RegionViewer<'a, bgzip::SeekReader<R>>
+    pub fn full_by<'a, F>(&'a mut self, predicate: F) -> RegionViewer<'a, R>
     where F: 'static + Fn(&record::Record) -> bool
     {
         if let Some(offset) = self.index.start_offset() {
             self.reader.set_chunks(vec![index::Chunk::new(offset, index::VirtualOffset::MAX)]);
         }
         RegionViewer {
-            reader: &mut self.reader,
+            parent: self,
             start: std::i32::MIN,
             end: std::i32::MAX,
             predicate: Box::new(predicate),
@@ -433,21 +441,21 @@ impl<R: Read + Seek> IndexedReader<R> {
     }
 
     /// Returns an iterator over unmapped records at the end of the BAM file.
-    pub fn unmapped<'a>(&'a mut self) -> RegionViewer<'a, bgzip::SeekReader<R>> {
+    pub fn unmapped<'a>(&'a mut self) -> RegionViewer<'a, R> {
         self.unmapped_by(|_| true)
     }
 
     /// Returns an iterator over unmapped records at the end of the BAM file.
     ///
     /// Records will be filtered by `predicate`, which allows to skip some records without allocating new memory.
-    pub fn unmapped_by<'a, F>(&'a mut self, predicate: F) -> RegionViewer<'a, bgzip::SeekReader<R>>
+    pub fn unmapped_by<'a, F>(&'a mut self, predicate: F) -> RegionViewer<'a, R>
     where F: 'static + Fn(&record::Record) -> bool
     {
         if let Some(offset) = self.index.end_offset() {
             self.reader.set_chunks(vec![index::Chunk::new(offset, index::VirtualOffset::MAX)]);
         }
         RegionViewer {
-            reader: &mut self.reader,
+            parent: self,
             start: -1,
             end: 0,
             predicate: Box::new(predicate),
@@ -539,11 +547,6 @@ impl<R: Read> BamReader<R> {
     pub fn header(&self) -> &Header {
         &self.header
     }
-
-    /// Pauses multi-thread reader until the next read operation. Does nothing to a single-thread reader.
-    pub fn pause(&mut self) {
-        self.reader.pause();
-    }
 }
 
 impl<R: Read> RecordReader for BamReader<R> {
@@ -553,6 +556,10 @@ impl<R: Read> RecordReader for BamReader<R> {
             record.clear();
         }
         res
+    }
+
+    fn pause(&mut self) {
+        self.reader.pause();
     }
 }
 
