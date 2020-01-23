@@ -474,7 +474,7 @@ impl<R: Read + Seek> IndexedReader<R> {
 
     /// Pauses multi-thread reader until the next read operation. Does nothing to a single-thread reader.
     ///
-    /// Use with caution: pausing and unpausing itself takes some time.
+    /// Use with caution: pausing and unpausing takes some time.
     pub fn pause(&mut self) {
         self.reader.pause();
     }

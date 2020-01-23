@@ -107,11 +107,11 @@ impl<W: Write> BamWriter<W> {
 
     /// Pauses multi-thread writer until the next write operation. Does nothing to a single-thread writer.
     ///
-    /// Use with caution: pausing and unpausing itself takes some time. Additionally, blocks that are compressed
+    /// Use with caution: pausing and unpausing takes some time. Additionally, blocks that are compressed
     /// at the moment will finish compressing, but will not be written.
     /// All other blocks in the queue will not be compressed nor written.
     ///
-    /// To compress and write all remaining blocks call [flush](#method.flush) before calling `pause`.
+    /// To compress and write all remaining blocks you can call [flush](#method.flush) before calling `pause`.
     pub fn pause(&mut self) {
         self.writer.pause();
     }

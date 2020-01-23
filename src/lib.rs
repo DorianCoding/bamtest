@@ -161,7 +161,7 @@ pub trait RecordReader: Iterator<Item = io::Result<Record>> {
 
     /// Pauses multi-thread reader until the next read operation. Does nothing to a single-thread reader.
     ///
-    /// Use with caution: pausing and unpausing itself takes some time.
+    /// Use with caution: pausing and unpausing takes some time.
     fn pause(&mut self);
 }
 
