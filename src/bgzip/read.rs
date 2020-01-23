@@ -22,7 +22,7 @@ use std::cmp::{min, max};
 
 use crate::index::{Chunk, VirtualOffset};
 use super::{Block, BlockError, ObjectPool};
-use super::{SLEEP_TIME, PAUSE_SLEEP_TIME, TIMEOUT};
+use super::{SLEEP_TIME, TIMEOUT};
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 struct WorkerId(u16);
@@ -59,16 +59,11 @@ struct Worker {
     worker_id: WorkerId,
     working_queue: Weak<Mutex<WorkingQueue>>,
     finish: Arc<AtomicBool>,
-    pause: Arc<AtomicBool>,
 }
 
 impl Worker {
-    fn run(&mut self) {
+    fn run(self) -> Self {
         'outer: while !self.finish.load(Relaxed) {
-            if self.pause.load(Relaxed) {
-                thread::sleep(PAUSE_SLEEP_TIME);
-                continue;
-            }
             let queue = match self.working_queue.upgrade() {
                 Some(value) => value,
                 // Reader was dropped
@@ -117,6 +112,7 @@ impl Worker {
                 break
             };
         }
+        self
     }
 }
 
@@ -278,9 +274,8 @@ impl<T: ReadBlock> DecompressBlock<T> for SingleThread {
 struct MultiThread {
     working_queue: Arc<Mutex<WorkingQueue>>,
     finish: Arc<AtomicBool>,
-    pause: Arc<AtomicBool>,
     blocks_pool: ObjectPool<Block>,
-    workers: Vec<thread::JoinHandle<()>>,
+    worker_handles: Vec<thread::JoinHandle<Worker>>,
     reached_end: bool,
     current_block: Block,
     was_error: bool,
@@ -292,42 +287,58 @@ impl MultiThread {
         assert!(threads > 0);
         let working_queue = Arc::new(Mutex::new(WorkingQueue::default()));
         let finish = Arc::new(AtomicBool::new(false));
-        let pause = Arc::new(AtomicBool::new(false));
-        let workers = (0..threads).map(|i| {
-            let mut worker = Worker {
+        let worker_handles = (0..threads).map(|i| {
+            let worker = Worker {
                 worker_id: WorkerId(i),
                 working_queue: Arc::downgrade(&working_queue),
                 finish: Arc::clone(&finish),
-                pause: Arc::clone(&pause),
             };
             thread::Builder::new()
                 .name(format!("bgzip_read{}", i + 1))
-                .spawn(move || worker.run())
+                .spawn(|| worker.run())
                 .expect("Cannot create a thread")
         }).collect();
 
         Self {
             working_queue,
             finish,
-            pause,
             blocks_pool: ObjectPool::new(|| Block::new()),
-            workers,
+            worker_handles,
             reached_end: false,
             current_block: Block::new(),
             was_error: true,
+        }
+    }
+
+    fn restart_workers(&mut self) {
+        if !self.finish.load(Relaxed) {
+            return;
+        }
+        let workers = self.worker_handles.drain(..).map(|thread| thread.join())
+            .collect::<Result<Vec<Worker>, _>>()
+            .unwrap_or_else(|e| panic!("Panic in one of the threads: {:?}", e));
+        self.finish.store(false, Relaxed);
+        for worker in workers {
+            self.worker_handles.push(thread::Builder::new()
+                .name(format!("bgzip_write{}", worker.worker_id.0 + 1))
+                .spawn(|| worker.run())
+                .expect("Cannot create a thread"));
         }
     }
 }
 
 impl<T: ReadBlock> DecompressBlock<T> for MultiThread {
     fn decompress_next(&mut self, reader: &mut T) -> Result<&Block, BlockError> {
-        self.pause.store(false, Relaxed);
+        if self.finish.load(Relaxed) {
+            self.restart_workers();
+        }
+
         self.was_error = true;
         let blocks_to_read = if self.reached_end {
             0
         } else if let Ok(guard) = self.working_queue.lock() {
             let ready_tasks = guard.tasks.iter().filter(|task| task.is_ready()).count();
-            self.workers.len().saturating_sub(std::cmp::max(guard.blocks.len(), ready_tasks))
+            self.worker_handles.len().saturating_sub(std::cmp::max(guard.blocks.len(), ready_tasks))
         } else {
             return Err(BlockError::IoError(io::Error::new(ErrorKind::Other,
                 "Panic in one of the threads")));
@@ -433,7 +444,7 @@ impl<T: ReadBlock> DecompressBlock<T> for MultiThread {
     }
 
     fn pause(&mut self) {
-        self.pause.store(true, Relaxed);
+        self.finish.store(true, Relaxed);
     }
 }
 
