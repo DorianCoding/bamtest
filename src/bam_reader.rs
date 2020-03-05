@@ -324,7 +324,7 @@ impl Region {
 ///
 /// If only records with specific MAPQ or FLAGs are needed, you can use `fetch_by`. For example,
 /// ```rust
-/// reader.fetch_by(1, 100_000, 200_000,
+/// reader.fetch_by(&bam::Region::new(1, 100_000, 200_000),
 ///     |record| record.mapq() >= 30 && !record.flag().is_secondary())
 /// ```
 /// to load only records with MAPQ at least 30 and skip all secondary alignments. In some cases it
