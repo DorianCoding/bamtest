@@ -471,6 +471,174 @@ write_value_array!(i32, b'i', write_i32);
 write_value_array!(u32, b'I', write_u32);
 write_value_array!(f32, b'f', write_f32);
 
+pub trait PushNum: Copy + Sized {
+    #[doc(hidden)]
+    fn push_individually(self, raw: &mut Vec<u8>) -> usize;
+
+    #[doc(hidden)]
+    fn push_array(arr: &[Self], raw: &mut Vec<u8>) -> usize;
+}
+
+macro_rules! push_num {
+    (
+        $push_fun:ident($type:ty) { $write_fun:ident($letter:expr) }
+    ) => {
+        #[inline]
+        fn $push_fun(value: $type, raw: &mut Vec<u8>) -> usize {
+            raw.push($letter);
+            raw.$write_fun::<LittleEndian>(value).unwrap();
+            1 + mem::size_of::<$type>()
+        }
+    }
+}
+
+#[inline]
+fn push_i8(value: i8, raw: &mut Vec<u8>) -> usize {
+    raw.push(b'c');
+    raw.push(unsafe { std::mem::transmute::<i8, u8>(value) });
+    2
+}
+
+#[inline]
+fn push_u8(value: u8, raw: &mut Vec<u8>) -> usize {
+    raw.push(b'C');
+    raw.push(value);
+    2
+}
+
+push_num!{
+    push_i16(i16) { write_i16(b's') }
+}
+
+push_num!{
+    push_u16(u16) { write_u16(b'S') }
+}
+
+push_num!{
+    push_i32(i32) { write_i32(b'i') }
+}
+
+push_num!{
+    push_u32(u32) { write_u32(b'I') }
+}
+
+impl PushNum for i8 {
+    fn push_individually(self, raw: &mut Vec<u8>) -> usize {
+        push_i8(self, raw)
+    }
+
+    fn push_array(arr: &[Self], raw: &mut Vec<u8>) -> usize {
+        raw.push(b'B');
+        raw.push(b'c');
+        raw.write_i32::<LittleEndian>(arr.len() as i32).unwrap();
+        unsafe {
+            raw.write_all(std::slice::from_raw_parts(arr.as_ptr() as *const u8, arr.len())).unwrap();
+        }
+        6 + arr.len()
+    }
+}
+
+impl PushNum for u8 {
+    fn push_individually(self, raw: &mut Vec<u8>) -> usize {
+        push_u8(self, raw)
+    }
+
+    fn push_array(arr: &[Self], raw: &mut Vec<u8>) -> usize {
+        raw.push(b'B');
+        raw.push(b'C');
+        raw.write_i32::<LittleEndian>(arr.len() as i32).unwrap();
+        raw.write_all(arr).unwrap();
+        6 + arr.len()
+    }
+}
+
+macro_rules! push_num_array {
+    ($fun:ident, $letter:expr) => {
+        fn push_array(arr: &[Self], raw: &mut Vec<u8>) -> usize {
+            raw.push(b'B');
+            raw.push($letter);
+            raw.write_i32::<LittleEndian>(arr.len() as i32).unwrap();
+            for v in arr.iter() {
+                raw.$fun::<LittleEndian>(*v).unwrap();
+            }
+            6 + arr.len() * mem::size_of::<Self>()
+        }
+    }
+}
+
+impl PushNum for i16 {
+    fn push_individually(self, raw: &mut Vec<u8>) -> usize {
+        if self >= 0 && self < 0x100 {
+            push_u8(self as u8, raw)
+        } else if self < 0 && self >= -0x80 {
+            push_i8(self as i8, raw)
+        } else {
+            push_i16(self, raw)
+        }
+    }
+
+    push_num_array!(write_i16, b's');
+}
+
+impl PushNum for u16 {
+    fn push_individually(self, raw: &mut Vec<u8>) -> usize {
+        if self < 0x100 {
+            push_u8(self as u8, raw)
+        } else {
+            push_u16(self, raw)
+        }
+    }
+
+    push_num_array!(write_u16, b'S');
+}
+
+impl PushNum for i32 {
+    fn push_individually(self, raw: &mut Vec<u8>) -> usize {
+        if self >= 0 {
+            if self < 0x100 {
+                push_u8(self as u8, raw)
+            } else if self < 0x10000 {
+                push_u16(self as u16, raw)
+            } else {
+                push_i32(self, raw)
+            }
+        } else {
+            if self >= -0x80 {
+                push_i8(self as i8, raw)
+            } else if self >= -0x8000 {
+                push_i16(self as i16, raw)
+            } else {
+                push_i32(self, raw)
+            }
+        }
+    }
+
+    push_num_array!(write_i32, b'i');
+}
+
+impl PushNum for u32 {
+    fn push_individually(self, raw: &mut Vec<u8>) -> usize {
+        if self < 0x100 {
+            push_u8(self as u8, raw)
+        } else if self < 0x10000 {
+            push_u16(self as u16, raw)
+        } else {
+            push_u32(self, raw)
+        }
+    }
+
+    push_num_array!(write_u32, b'I');
+}
+
+impl PushNum for f32 {
+    fn push_individually(self, raw: &mut Vec<u8>) -> usize {
+        raw.push(b'f');
+        raw.write_f32::<LittleEndian>(self).unwrap();
+        1 + mem::size_of::<f32>()
+    }
+
+    push_num_array!(write_f32, b'f');
+}
 
 /// Wrapper around raw tags.
 ///
