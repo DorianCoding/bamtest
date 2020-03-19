@@ -315,162 +315,6 @@ impl<'a> TagValue<'a> {
     }
 }
 
-/// Wrapper around `&u8`, used to specify tag type as _Hex_, not `String` and not `&[u8]`.
-/// Should have an even number of characters.
-pub struct Hex<'a>(pub &'a [u8]);
-
-mod private {
-    /// Sealed trait, designed to forbid new implementations of `WriteValue`.
-    pub trait Sealed {}
-    impl Sealed for char {}
-    impl Sealed for i8 {}
-    impl Sealed for u8 {}
-    impl Sealed for i16 {}
-    impl Sealed for u16 {}
-    impl Sealed for i32 {}
-    impl Sealed for u32 {}
-    impl Sealed for f32 {}
-    
-    impl Sealed for &str {}
-    impl<'a> Sealed for super::Hex<'a> {}
-    
-    impl Sealed for &[i8] {}
-    impl Sealed for &[u8] {}
-    impl Sealed for &[i16] {}
-    impl Sealed for &[u16] {}
-    impl Sealed for &[i32] {}
-    impl Sealed for &[u32] {}
-    impl Sealed for &[f32] {}
-}
-
-/// A trait for writing tag values. Implemented for:
-/// * `char`, but will return error, if char takes more than one byte,
-/// * numeric values `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `f32`,
-/// * numeric slices `&[i8]`, `&[u8]`, `&[i16]`, ..., `&[f32]`,
-/// * string slice `&str`. You can use `std::str::from_utf8_unchecked` to convert `&[u8]` to `&str`.
-/// We use `&str` here to distinguish between string and int array types.
-/// * [hex wrapper](struct.Hex.html) over `&[u8]`,
-///
-/// String and Hex values cannot contain null symbols, even at the end.
-///
-/// The trait cannot be implemented for new types.
-pub trait WriteValue: private::Sealed {
-    /// Returns the number of written bytes (does not include name).
-    fn write<W: Write>(&self, f: &mut W) -> io::Result<usize>;
-}
-
-impl WriteValue for char {
-    fn write<W: Write>(&self, f: &mut W) -> io::Result<usize> {
-        if self.len_utf8() != 1 {
-            return Err(io::Error::new(InvalidData,
-                "Cannot write tag value: char value takes more than one byte"));
-        }
-        f.write_all(&[b'A', *self as u8])?;
-        Ok(2)
-    }
-}
-
-impl WriteValue for i8 {
-    fn write<W: Write>(&self, f: &mut W) -> io::Result<usize> {
-        f.write_all(&[b'c', unsafe { std::mem::transmute::<i8, u8>(*self) }])?;
-        Ok(2)
-    }
-}
-
-impl WriteValue for u8 {
-    fn write<W: Write>(&self, f: &mut W) -> io::Result<usize> {
-        f.write_all(&[b'C', *self])?;
-        Ok(2)
-    }
-}
-
-macro_rules! write_value_prim {
-    ($name:ty, $letter:expr, $fun:ident) => {
-        impl WriteValue for $name {
-            fn write<W: Write>(&self, f: &mut W) -> io::Result<usize> {
-                f.write_u8($letter)?;
-                f.$fun::<LittleEndian>(*self)?;
-                Ok(1 + mem::size_of::<$name>())
-            }
-        }
-    }
-}
-
-write_value_prim!(i16, b's', write_i16);
-write_value_prim!(u16, b'S', write_u16);
-write_value_prim!(i32, b'i', write_i32);
-write_value_prim!(u32, b'I', write_u32);
-write_value_prim!(f32, b'f', write_f32);
-
-impl WriteValue for &str {
-    fn write<W: Write>(&self, f: &mut W) -> io::Result<usize> {
-        if self.bytes().any(|ch| ch == 0) {
-            return Err(io::Error::new(InvalidData, "Cannot write tag value: String contains null"));
-        }
-        f.write_u8(b'Z')?;
-        f.write_all(self.as_bytes())?;
-        f.write_u8(0)?;
-        Ok(2 + self.len())
-    }
-}
-
-impl<'a> WriteValue for Hex<'a> {
-    fn write<W: Write>(&self, f: &mut W) -> io::Result<usize> {
-        if self.0.len() % 2 != 0 {
-            return Err(io::Error::new(InvalidData,
-                "Cannot write tag value: Hex string contains an odd number of bytes"));
-        }
-        if self.0.iter().any(|&ch| ch == 0) {
-            return Err(io::Error::new(InvalidData, "Cannot write tag value: Hex contains null"));
-        }
-        f.write_u8(b'H')?;
-        f.write_all(self.0)?;
-        f.write_u8(0)?;
-        Ok(2 + self.0.len())
-    }
-}
-
-impl WriteValue for &[i8] {
-    fn write<W: Write>(&self, f: &mut W) -> io::Result<usize> {
-        f.write_all(b"Bc")?;
-        f.write_i32::<LittleEndian>(self.len() as i32)?;
-        unsafe {
-            f.write_all(std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len()))?;
-        }
-        Ok(6 + self.len())
-    }
-}
-
-impl WriteValue for &[u8] {
-    fn write<W: Write>(&self, f: &mut W) -> io::Result<usize> {
-        f.write_all(b"BC")?;
-        f.write_i32::<LittleEndian>(self.len() as i32)?;
-        f.write_all(self)?;
-        Ok(6 + self.len())
-    }
-}
-
-macro_rules! write_value_array {
-    ($name:ty, $letter:expr, $fun:ident) => {
-        impl WriteValue for &[$name] {
-            fn write<W: Write>(&self, f: &mut W) -> io::Result<usize> {
-                f.write_all(&[b'B', $letter])?;
-                f.write_i32::<LittleEndian>(self.len() as i32)?;
-                for v in self.iter() {
-                    f.$fun::<LittleEndian>(*v)?;
-                }
-                Ok(6 + self.len() * mem::size_of::<$name>())
-            }
-        }
-    }
-}
-
-write_value_array!(i16, b's', write_i16);
-write_value_array!(u16, b'S', write_u16);
-write_value_array!(i32, b'i', write_i32);
-write_value_array!(u32, b'I', write_u32);
-write_value_array!(f32, b'f', write_f32);
-
 pub trait PushNum: Copy + Sized {
     #[doc(hidden)]
     fn push_individually(self, raw: &mut Vec<u8>) -> usize;
@@ -795,46 +639,51 @@ impl TagViewer {
         }
     }
 
-    /// Appends a new tag. Trait [WriteValue](trait.WriteValue.html) is implemented for possible
-    /// tag values, so you can add new tags like this:
-    /// ```rust
-    /// record.tags_mut().push(b"AA", 10)
-    /// ```
-    /// Due to Rust constraints, you may need to explicitly coerce a numeric array to a slice,
-    /// for example
-    /// ```rust
-    /// record.tags_mut().push(b"BB", &[10_i16, 20, 30] as &[i16]).unwrap();
-    /// ```
-    ///
-    /// This function does not check if there is already a tag with the same name.
-    /// Takes `O(new_tag_len)`.
-    ///
-    /// See [WriteValue](trait.WriteValue.html) for more information. 
-    pub fn push<V: WriteValue>(&mut self, name: &TagName, value: V) -> io::Result<()> {
+    pub fn push_char(&mut self, name: &TagName, value: u8) {
         self.raw.push(name[0]);
         self.raw.push(name[1]);
-        self.lengths.push(2 + value.write(&mut self.raw)? as u32);
-        Ok(())
+        self.raw.push(b'A');
+        self.raw.push(value);
     }
 
-    /// Inserts a new tag instead of existing.
-    /// If there is no tags with the same name, pushes to
-    /// the end and returns `None`. Takes `O(raw_tags_len + new_tag_len)`.
-    pub fn insert<'a, V: WriteValue>(&'a mut self, name: &TagName, value: V) -> io::Result<()> {
-        let mut start = 0;
-        for i in 0..self.lengths.len() {
-            let tag_len = self.lengths[i] as usize;
-            if name == &self.raw[start..start + 2] {
-                let mut new_tag = Vec::new();
-                let new_len = value.write(&mut new_tag)? as u32;
-                self.raw.splice(start + 2..start + tag_len, new_tag);
-                self.lengths[i] = 2 + new_len;
-                return Ok(());
-            }
-            start += tag_len;
-        }
-        self.push(name, value)?;
-        Ok(())
+    pub fn push_num<V: PushNum>(&mut self, name: &TagName, value: V) {
+        self.raw.push(name[0]);
+        self.raw.push(name[1]);
+        self.lengths.push(2 + value.push_individually(&mut self.raw) as u32);
+    }
+
+    pub fn push_array<V: PushNum>(&mut self, name: &TagName, array: &[V]) {
+        self.raw.push(name[0]);
+        self.raw.push(name[1]);
+        self.lengths.push(2 + V::push_array(array, &mut self.raw) as u32);
+    }
+
+    /// Push tag with string value. Panics if the string contains null symbol.
+    pub fn push_string(&mut self, name: &TagName, string: &[u8]) {
+        assert!(string.iter().all(|ch| *ch != 0),
+            "Cannot push tag {}{}: String value contains null symbol.", name[0] as char, name[1] as char);
+
+        self.raw.push(name[0]);
+        self.raw.push(name[1]);
+        self.raw.push(b'Z');
+        self.raw.extend(string);
+        self.raw.push(0);
+        self.lengths.push(4 + string.len() as u32);
+    }
+
+    /// Push tag with string value. Panics if the string contains null symbol or has odd number of symbols.
+    pub fn push_hex(&mut self, name: &TagName, hex: &[u8]) {
+        assert!(hex.len() % 2 == 0,
+            "Cannot push tag {}{}: Hex value has an odd number of symbols", name[0] as char, name[1] as char);
+        assert!(hex.iter().all(|ch| *ch != 0),
+            "Cannot push tag {}{}: Hex value contains null symbol.", name[0] as char, name[1] as char);
+
+        self.raw.push(name[0]);
+        self.raw.push(name[1]);
+        self.raw.push(b'H');
+        self.raw.extend(hex);
+        self.raw.push(0);
+        self.lengths.push(4 + hex.len() as u32);
     }
 
     /// Removes a tag if present. Returns `true` if the tag existed and `false` otherwise.
@@ -862,27 +711,6 @@ impl TagViewer {
         Ok(())
     }
 
-    /// Pushes integer in a smallest possible format.
-    pub fn push_int(&mut self, name: &TagName, value: i64) {
-        if value >= 0 {
-            if value < 0x100 {
-                self.push(name, value as u8).expect("Failed to push int tag");
-            } else if value < 0x10000 {
-                self.push(name, value as u16).expect("Failed to push int tag");
-            } else {
-                self.push(name, value as u32).expect("Failed to push int tag");
-            }
-        } else {
-            if value >= -0x80 {
-                self.push(name, value as i8).expect("Failed to push int tag");
-            } else if value >= -0x8000 {
-                self.push(name, value as i16).expect("Failed to push int tag");
-            } else {
-                self.push(name, value as i32).expect("Failed to push int tag");
-            }
-        }
-    }
-
     /// Returns false if failed to parse.
     fn push_sam_array(&mut self, name: &TagName, value: &str) -> bool {
         let mut split = value.split(',');
@@ -893,19 +721,19 @@ impl TagViewer {
 
         match arr_type {
             "c" => split.map(|s| s.parse::<i8>()).collect::<Result<Vec<_>, _>>()
-                .map(|values| self.push(name, &values as &[i8])).is_ok(),
+                .map(|values| self.push_array(name, &values)).is_ok(),
             "C" => split.map(|s| s.parse::<u8>()).collect::<Result<Vec<_>, _>>()
-                .map(|values| self.push(name, &values as &[u8])).is_ok(),
+                .map(|values| self.push_array(name, &values)).is_ok(),
             "s" => split.map(|s| s.parse::<i16>()).collect::<Result<Vec<_>, _>>()
-                .map(|values| self.push(name, &values as &[i16])).is_ok(),
+                .map(|values| self.push_array(name, &values)).is_ok(),
             "S" => split.map(|s| s.parse::<u16>()).collect::<Result<Vec<_>, _>>()
-                .map(|values| self.push(name, &values as &[u16])).is_ok(),
+                .map(|values| self.push_array(name, &values)).is_ok(),
             "i" => split.map(|s| s.parse::<i32>()).collect::<Result<Vec<_>, _>>()
-                .map(|values| self.push(name, &values as &[i32])).is_ok(),
+                .map(|values| self.push_array(name, &values)).is_ok(),
             "I" => split.map(|s| s.parse::<u32>()).collect::<Result<Vec<_>, _>>()
-                .map(|values| self.push(name, &values as &[u32])).is_ok(),
+                .map(|values| self.push_array(name, &values)).is_ok(),
             "f" => split.map(|s| s.parse::<f32>()).collect::<Result<Vec<_>, _>>()
-                .map(|values| self.push(name, &values as &[f32])).is_ok(),
+                .map(|values| self.push_array(name, &values)).is_ok(),
             _ => false,
         }
     }
@@ -927,34 +755,34 @@ impl TagViewer {
                 if tag_bytes.len() != 6 {
                     return false;
                 }
-                self.push(tag_name, tag_bytes[5] as char).is_ok()
+                self.push_char(tag_name, tag_bytes[5])
             },
             b'i' => {
                 let number: i64 = match tag_value.parse() {
                     Ok(value) => value,
                     Err(_) => return false,
                 };
-                self.push_int(tag_name, number);
-                true
+                if number >= 0 && number < 0x100000000 {
+                    self.push_num(tag_name, number as u32);
+                } else if number < 0 && number >= -0x100000000 {
+                    self.push_num(tag_name, number as i32);
+                } else {
+                    return false;
+                }
             },
             b'f' => {
                 let float: f32 = match tag_value.parse() {
                     Ok(value) => value,
                     Err(_) => return false,
                 };
-                self.push(tag_name, float).is_ok()
+                self.push_num(tag_name, float)
             },
-            b'Z' => {
-                self.push(tag_name, tag_value).is_ok()
-            },
-            b'H' => {
-                self.push(tag_name, Hex(tag_value.as_bytes())).is_ok()
-            },
-            b'B' => {
-                self.push_sam_array(tag_name, tag_value)
-            },
-            _ => false,
+            b'Z' => self.push_string(tag_name, tag_value.as_bytes()),
+            b'H' => self.push_hex(tag_name, tag_value.as_bytes()),
+            b'B' => return self.push_sam_array(tag_name, tag_value),
+            _ => return false,
         }
+        true
     }
 
     /// Adds a new tag in SAM format (name:type:value).
