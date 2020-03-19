@@ -502,25 +502,9 @@ impl PushNum for f32 {
 /// }
 /// ```
 ///
-/// Methods [push](#method.push) and [insert](#method.insert) add a tag (or modify a tag),
-/// and they provide a convinient way to specify tag type. For numeric and string types, you
-/// can just write
-/// ```rust
-/// // Add a new tag with name `AA`, type `i32` and value `10`.
-/// record.tags_mut().push(b"AA", 10_i32);
-/// // Add a new tag with name `ZZ`, type `string` and value `"abcd"`.
-/// record.tags_mut().push(b"ZZ", "abcd");
-/// ```
-/// To add a Hex value you need to wrap `&[u8]` in a [Hex](struct.Hex.html) wrapper:
-/// ```rust
-/// // Add a new tag with name `HH`, type `hex` and value `"FF00"`.
-/// record.tags_mut().push(b"HH", Hex(b"FF00"));
-/// ```
-/// Finally, to specify a numeric array, you may need to coerce the array to a splice:
-/// ```rust
-/// // Add a new tag with name `BB`, type `i16 array` and value `[3, 4, 5, 6]`.
-/// record.tags_mut().push(b"BB", &[3_i16, 4, 5, 6] as &[i16]);
-/// ```
+/// Methods [push_char](#method.push_char), [push_num](#method.push_num), [push_array](#method.push_array),
+/// [push_string](#method.push_string), [push_hex](#method.push_hex), as well as [push_sam](#method.push_sam)
+/// allow to add a tag of a specific type. Method [remove](#method.remove) allows to remove a tag by its name.
 #[derive(Clone)]
 pub struct TagViewer {
     raw: Vec<u8>,
@@ -639,6 +623,8 @@ impl TagViewer {
         }
     }
 
+    /// Adds a tag with char value.
+    /// The function appends the tag to the end even if there already is a tag with the same name.
     pub fn push_char(&mut self, name: &TagName, value: u8) {
         self.raw.push(name[0]);
         self.raw.push(name[1]);
@@ -647,19 +633,31 @@ impl TagViewer {
         self.lengths.push(4);
     }
 
+    /// Adds a tag with numeric value (accepts types `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `f32`).
+    /// The function appends the tag to the end even if there already is a tag with the same name.
+    ///
+    /// The number will be stored using the minimal number of bits (for example `10_u32` will be stored as `u8`).
     pub fn push_num<V: PushNum>(&mut self, name: &TagName, value: V) {
         self.raw.push(name[0]);
         self.raw.push(name[1]);
         self.lengths.push(2 + value.push_individually(&mut self.raw) as u32);
     }
 
+    /// Adds a tag with numeric array (accepts slices of types `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `f32`).
+    /// The function appends the tag to the end even if there already is a tag with the same name.
+    ///
+    /// In contrast to [push_num](#method.push_num), the array will not change types
+    /// (for example `&[10_u32, 12_u32]` will be stored using 4\*2 bytes, not 1\*2).
     pub fn push_array<V: PushNum>(&mut self, name: &TagName, array: &[V]) {
         self.raw.push(name[0]);
         self.raw.push(name[1]);
         self.lengths.push(2 + V::push_array(array, &mut self.raw) as u32);
     }
 
-    /// Push tag with string value. Panics if the string contains null symbol.
+    /// Adds a tag with string value.
+    /// The function appends the tag to the end even if there already is a tag with the same name.
+    ///
+    /// Panics if the string contains null symbol.
     pub fn push_string(&mut self, name: &TagName, string: &[u8]) {
         assert!(string.iter().all(|ch| *ch != 0),
             "Cannot push tag {}{}: String value contains null symbol.", name[0] as char, name[1] as char);
@@ -672,7 +670,10 @@ impl TagViewer {
         self.lengths.push(4 + string.len() as u32);
     }
 
-    /// Push tag with string value. Panics if the string contains null symbol or has odd number of symbols.
+    /// Adds a tag with hexadecimal value (same as string, but requires an even number of characters).
+    /// The function appends the tag to the end even if there already is a tag with the same name.
+    ///
+    /// Panics if the `hex` contains null symbol or has odd number of symbols.
     pub fn push_hex(&mut self, name: &TagName, hex: &[u8]) {
         assert!(hex.len() % 2 == 0,
             "Cannot push tag {}{}: Hex value has an odd number of symbols", name[0] as char, name[1] as char);
@@ -685,6 +686,16 @@ impl TagViewer {
         self.raw.extend(hex);
         self.raw.push(0);
         self.lengths.push(4 + hex.len() as u32);
+    }
+
+    /// Adds a tag in SAM format (name:type:value).
+    /// The function appends the tag to the end even if there already is a tag with the same name.
+    pub fn push_sam(&mut self, tag: &str) -> io::Result<()> {
+        if self.inner_push_sam(tag) {
+            Ok(())
+        } else {
+            Err(io::Error::new(InvalidData, format!("Cannot parse tag '{}'", tag)))
+        }
     }
 
     /// Removes a tag if present. Returns `true` if the tag existed and `false` otherwise.
@@ -784,15 +795,6 @@ impl TagViewer {
             _ => return false,
         }
         true
-    }
-
-    /// Adds a new tag in SAM format (name:type:value).
-    pub fn push_sam(&mut self, tag: &str) -> io::Result<()> {
-        if self.inner_push_sam(tag) {
-            Ok(())
-        } else {
-            Err(io::Error::new(InvalidData, format!("Cannot parse tag '{}'", tag)))
-        }
     }
 }
 
