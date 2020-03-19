@@ -13,8 +13,10 @@ use glob::glob;
 use bam::{RecordReader, RecordWriter};
 
 fn compare_sam_files<P: AsRef<Path>, T: AsRef<Path>, W: Write>(filename1: P, filename2: T, log: &mut W) {
-    let mut file1 = BufReader::new(File::open(filename1).unwrap());
-    let mut file2 = BufReader::new(File::open(filename2).unwrap());
+    let filename1 = filename1.as_ref();
+    let filename2 = filename2.as_ref();
+    let mut file1 = BufReader::new(File::open(&filename1).unwrap());
+    let mut file2 = BufReader::new(File::open(&filename2).unwrap());
     let mut line1 = String::new();
     let mut line2 = String::new();
 
@@ -24,10 +26,14 @@ fn compare_sam_files<P: AsRef<Path>, T: AsRef<Path>, W: Write>(filename1: P, fil
         match (file1.read_line(&mut line1), file2.read_line(&mut line2)) {
             (Ok(x), Ok(y)) => {
                 if x == 0 && y != 0 {
+                    writeln!(log, "Comparing files {} and {}", filename1.display(), filename2.display()).unwrap();
                     writeln!(log, "Samtools output: {}", line2.trim()).unwrap();
+                    writeln!(log, "Samtools output is longer").unwrap();
                     panic!("Samtools output is longer");
                 } else if x != 0 && y == 0 {
+                    writeln!(log, "Comparing files {} and {}", filename1.display(), filename2.display()).unwrap();
                     writeln!(log, "Crate output:    {}", line1.trim()).unwrap();
+                    writeln!(log, "Crate output is longer").unwrap();
                     panic!("Crate output is longer");
                 } else if x == 0 && y == 0 {
                     break;
@@ -38,8 +44,10 @@ fn compare_sam_files<P: AsRef<Path>, T: AsRef<Path>, W: Write>(filename1: P, fil
             (Err(e1), Err(e2)) => panic!("Could not read both outputs: {:?}, {:?}", e1, e2),
         }
         if line1 != line2 {
+            writeln!(log, "Comparing files {} and {}", filename1.display(), filename2.display()).unwrap();
             writeln!(log, "Crate output:    {}", line1.trim()).unwrap();
             writeln!(log, "Samtools output: {}", line2.trim()).unwrap();
+            writeln!(log, "Outputs do not match on line {}", i).unwrap();
             panic!("Outputs do not match on line {}", i);
         }
     }
@@ -89,7 +97,7 @@ fn test_indexed_reader<W: Write>(path: &str, additional_threads: u16, log: &mut 
 
         let timer = Instant::now();
         let mut child = Command::new("samtools")
-            .args(&["view", "-h"])
+            .args(&["view", "-h", "--no-PG"])
             .arg(path)
             .arg(format!("{}:{}-{}", ref_name, start + 1, end))
             .args(&["-o", &output2])
@@ -130,7 +138,7 @@ fn test_bam_reader<W: Write>(path: &str, additional_threads: u16, log: &mut W) {
 
     let timer = Instant::now();
     let mut child = Command::new("samtools")
-        .args(&["view", "-h"])
+        .args(&["view", "-h", "--no-PG"])
         .arg(path)
         .args(&["-o", &output2])
         .spawn()
@@ -169,7 +177,7 @@ fn test_bam_to_bam<W: Write>(path: &str, additional_threads: u16, log: &mut W) {
 
     let timer = Instant::now();
     let mut child = Command::new("samtools")
-        .args(&["view", "-h"])
+        .args(&["view", "-h", "--no-PG"])
         .arg(&path)
         .args(&["-o", &output2])
         .spawn()
@@ -180,7 +188,7 @@ fn test_bam_to_bam<W: Write>(path: &str, additional_threads: u16, log: &mut W) {
     writeln!(log, "        total {} records", count).unwrap();
 
     let mut child = Command::new("samtools")
-        .args(&["view", "-h"])
+        .args(&["view", "-h", "--no-PG"])
         .arg(&bam_output)
         .args(&["-o", &output1])
         .spawn()
@@ -224,7 +232,7 @@ fn test_bam_to_bam_pause<W: Write>(path: &str, additional_threads: u16, log: &mu
 
     let timer = Instant::now();
     let mut child = Command::new("samtools")
-        .args(&["view", "-h"])
+        .args(&["view", "-h", "--no-PG"])
         .arg(&path)
         .args(&["-o", &output2])
         .spawn()
@@ -235,7 +243,7 @@ fn test_bam_to_bam_pause<W: Write>(path: &str, additional_threads: u16, log: &mu
     writeln!(log, "        total {} records", count).unwrap();
 
     let mut child = Command::new("samtools")
-        .args(&["view", "-h"])
+        .args(&["view", "-h", "--no-PG"])
         .arg(&bam_output)
         .args(&["-o", &output1])
         .spawn()
@@ -294,7 +302,7 @@ fn test_ind_bam_to_bam<W: Write>(path: &str, additional_threads: u16, log: &mut 
 
         let timer = Instant::now();
         let mut child = Command::new("samtools")
-            .args(&["view", "-h"])
+            .args(&["view", "-h", "--no-PG"])
             .arg(&path)
             .arg(format!("{}:{}-{}", ref_name, start + 1, end))
             .args(&["-o", &output2])
@@ -306,7 +314,7 @@ fn test_ind_bam_to_bam<W: Write>(path: &str, additional_threads: u16, log: &mut 
         writeln!(log, "        total {} records", count).unwrap();
 
         let mut child = Command::new("samtools")
-        .args(&["view", "-h"])
+        .args(&["view", "-h", "--no-PG"])
         .arg(&bam_output)
         .args(&["-o", &output1])
         .spawn()
@@ -344,7 +352,7 @@ fn test_sam_to_bam<W: Write>(path: &str, log: &mut W) {
 
     let timer = Instant::now();
     let mut child = Command::new("samtools")
-        .args(&["view", "-h"])
+        .args(&["view", "-h", "--no-PG"])
         .arg(&bam_output)
         .args(&["-o", &output1])
         .spawn()

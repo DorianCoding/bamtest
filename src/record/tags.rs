@@ -644,6 +644,7 @@ impl TagViewer {
         self.raw.push(name[1]);
         self.raw.push(b'A');
         self.raw.push(value);
+        self.lengths.push(4);
     }
 
     pub fn push_num<V: PushNum>(&mut self, name: &TagName, value: V) {
