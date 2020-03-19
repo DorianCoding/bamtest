@@ -81,7 +81,7 @@
 //!     record.set_seq_qual("ACGT".bytes(), [10_u8, 20, 30, 10].iter().cloned()).unwrap();
 //!     record.set_cigar("2M1I1M".bytes()).unwrap();
 //!     // Add NM tag.
-//!     record.tags_mut().push(b"NM", 1).unwrap();
+//!     record.tags_mut().push_num(b"NM", 1);
 //! 
 //!     writer.write(&record).unwrap();
 //!     writer.finish().unwrap();

@@ -292,7 +292,7 @@ impl<'a> NextToErr<'a> for std::str::Split<'a, char> {
 /// You can use [aligned_pairs](#method.aligned_pairs) and [matching_pairs](#method.matching_pairs)
 /// to iterate over record/reference aligned positions.
 ///
-/// If the record has an MD tag, you can use [aligned_positions](#method.aligned_positions) to get record/reference
+/// If the record has an MD tag, you can use [alignment_entries](#method.alignment_entries) to get record/reference
 /// positions and corresponding nucleotides.
 #[derive(Clone)]
 pub struct Record {
@@ -968,37 +968,38 @@ impl Record {
         self.cigar.matching_pairs(self.start as u32)
     }
 
-    /// Returns an iterator over [AlignmentPosition](struct.AlignmentPosition.html), which stores information
+    /// Returns an iterator over [AlignmentEntry](struct.AlignmentEntry.html), which stores information
     /// about a single position in the record-reference alignment.
     ///
-    /// The function returns [NucleotidesError](enum.NucleotidesError.html)
+    /// The function returns [EntriesError](enum.EntriesError.html)
     /// if the record does not have a sequence or an MD tag.
     ///
     /// ```rust
-    /// for pos in record.aligned_positions().unwrap() {
-    ///     if let Some((record_pos, record_nt)) = pos.record_pos_nt() {
-    ///         print!("{} {}, ", record_pos, record_nt as char);
+    /// for entry in record.alignment_entries().unwrap() {
+    ///     if let Some((record_pos, record_nt)) = entry.record_pos_nt() {
+    ///         print!("{} {}", record_pos, record_nt as char);
     ///     } else {
-    ///         print!("- , ");
+    ///         print!("-");
     ///     }
-    ///     if let Some((ref_pos, ref_nt)) = pos.ref_pos_nt() {
+    ///     print!(", ");
+    ///     if let Some((ref_pos, ref_nt)) = entry.ref_pos_nt() {
     ///         println!("{} {}", ref_pos, ref_nt as char);
     ///     } else {
     ///         println!("-");
     ///     }
     /// }
     /// ```
-    pub fn aligned_positions(&self) -> Result<AlignedPositions, NucleotidesError> {
+    pub fn alignment_entries(&self) -> Result<EntriesIter, EntriesError> {
         if !self.sequence().available() {
-            return Err(NucleotidesError::NoSequence);
+            return Err(EntriesError::NoSequence);
         }
         let md_tag = match self.tags().get(b"MD") {
             Some(tags::TagValue::String(tag, _)) => tag,
-            Some(_) => return Err(NucleotidesError::IncorrectMD),
-            None => return Err(NucleotidesError::NoMD),
+            Some(_) => return Err(EntriesError::IncorrectMD),
+            None => return Err(EntriesError::NoMD),
         };
 
-        Ok(AlignedPositions {
+        Ok(EntriesIter {
             parent: self,
             aligned_pairs: self.cigar.aligned_pairs(self.start as u32),
             md_tag,
@@ -1016,14 +1017,14 @@ impl fmt::Debug for Record {
     }
 }
 
-/// An error that can arise from [aligned_positions](struct.Record.html#method.aligned_positions).
+/// An error that can arise from [alignment_entries](struct.Record.html#method.alignment_entries).
 ///
 /// Variants:
 /// * NoSequence - the record has no sequence,
 /// * NoMD - the record has no MD tag,
 /// * IncorrectMD - the record has an MD tag, but it has an unexpected type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NucleotidesError {
+pub enum EntriesError {
     NoSequence,
     NoMD,
     IncorrectMD,
@@ -1033,14 +1034,14 @@ const MISSING: u32 = std::u32::MAX;
 
 /// Contains single position in the alignment between the record and the reference.
 #[derive(Clone)]
-pub struct AlignmentPosition {
+pub struct AlignmentEntry {
     record_pos: u32,
     record_nt: u8,
     ref_pos: u32,
     ref_nt: u8,
 }
 
-impl AlignmentPosition {
+impl AlignmentEntry {
     /// Returns record position unless within a deletion.
     pub fn record_pos(&self) -> Option<u32> {
         if self.record_pos != MISSING {
@@ -1118,7 +1119,7 @@ impl AlignmentPosition {
     }
 }
 
-impl fmt::Debug for AlignmentPosition {
+impl fmt::Debug for AlignmentEntry {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.record_pos != MISSING {
             write!(f, "{}: {}, ", self.record_pos, self.record_nt as char)?;
@@ -1133,9 +1134,9 @@ impl fmt::Debug for AlignmentPosition {
     }
 }
 
-/// Iterator over [alignment positions](struct.AlignmentPosition.html).
+/// Iterator over [alignment positions](struct.AlignmentEntry.html).
 #[derive(Clone)]
-pub struct AlignedPositions<'a> {
+pub struct EntriesIter<'a> {
     parent: &'a Record,
     aligned_pairs: cigar::AlignedPairs<'a>,
     md_tag: &'a [u8],
@@ -1143,7 +1144,7 @@ pub struct AlignedPositions<'a> {
     md_index: usize,
 }
 
-impl<'a> AlignedPositions<'a> {
+impl<'a> EntriesIter<'a> {
     fn curr_ref_nt(&mut self, record_nt: Option<u8>) -> u8 {
         let start_with_remaining_md = self.md_remaining_len > 0;
         while !start_with_remaining_md && self.md_index < self.md_tag.len() {
@@ -1185,8 +1186,8 @@ impl<'a> AlignedPositions<'a> {
     }
 }
 
-impl<'a> Iterator for AlignedPositions<'a> {
-    type Item = AlignmentPosition;
+impl<'a> Iterator for EntriesIter<'a> {
+    type Item = AlignmentEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
         let pair = self.aligned_pairs.next()?;
@@ -1194,11 +1195,11 @@ impl<'a> Iterator for AlignedPositions<'a> {
             (Some(record_pos), Some(ref_pos)) => {
                 let record_nt = self.parent.sequence().at(record_pos as usize);
                 let ref_nt = self.curr_ref_nt(Some(record_nt));
-                return Some(AlignmentPosition { record_pos, record_nt, ref_pos, ref_nt });
+                return Some(AlignmentEntry { record_pos, record_nt, ref_pos, ref_nt });
             },
             (Some(record_pos), None) => {
                 let record_nt = self.parent.sequence().at(record_pos as usize);
-                return Some(AlignmentPosition {
+                return Some(AlignmentEntry {
                     record_pos, record_nt,
                     ref_pos: MISSING,
                     ref_nt: 0,
@@ -1206,7 +1207,7 @@ impl<'a> Iterator for AlignedPositions<'a> {
             },
             (None, Some(ref_pos)) => {
                 let ref_nt = self.curr_ref_nt(None);
-                return Some(AlignmentPosition {
+                return Some(AlignmentEntry {
                     ref_pos, ref_nt,
                     record_pos: MISSING,
                     record_nt: 0,

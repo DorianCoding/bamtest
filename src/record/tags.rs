@@ -505,6 +505,14 @@ impl PushNum for f32 {
 /// Methods [push_char](#method.push_char), [push_num](#method.push_num), [push_array](#method.push_array),
 /// [push_string](#method.push_string), [push_hex](#method.push_hex), as well as [push_sam](#method.push_sam)
 /// allow to add a tag of a specific type. Method [remove](#method.remove) allows to remove a tag by its name.
+///
+/// ```rust
+/// record.tags_mut().push_num(b"aa", 10);
+/// record.tags_mut().push_char(b"ab", b'z');
+/// record.tags_mut().push_array(b"ac", &[10, 20, 30]);
+/// record.tags_mut().push_string(b"ad", b"ABCD");
+/// record.tags_mut().push_sam("af:Z:ABCD").unwrap();
+/// ```
 #[derive(Clone)]
 pub struct TagViewer {
     raw: Vec<u8>,
@@ -586,11 +594,6 @@ impl TagViewer {
         } else {
             Ok(())
         }
-    }
-
-    /// Returns raw data.
-    pub fn raw(&self) -> &[u8] {
-        &self.raw
     }
 
     /// Clears the contents but does not touch capacity.
@@ -795,6 +798,16 @@ impl TagViewer {
             _ => return false,
         }
         true
+    }
+
+    /// Returns raw data.
+    pub fn raw(&self) -> &[u8] {
+        &self.raw
+    }
+
+    /// Returns lengths of tags in raw data.
+    pub fn raw_lengths(&self) -> &[u32] {
+        &self.lengths
     }
 }
 
