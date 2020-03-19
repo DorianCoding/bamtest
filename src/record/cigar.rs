@@ -421,6 +421,8 @@ impl<'a> Iterator for AlignedPairs<'a> {
     }
 }
 
+impl<'a> std::iter::FusedIterator for AlignedPairs<'a> { }
+
 /// Iterator over pairs `(u32, u32)`.
 /// The first element represents a sequence index, and the second element represents a
 /// reference index. This iterator skips insertions and deletions.
@@ -456,6 +458,8 @@ impl<'a> Iterator for MatchingPairs<'a> {
         Some((self.q_pos - 1, self.r_pos - 1))
     }
 }
+
+impl<'a> std::iter::FusedIterator for MatchingPairs<'a> { }
 
 impl Display for Cigar {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {

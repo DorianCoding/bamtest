@@ -3,6 +3,7 @@
 use std::io::{self, Read, Write};
 use std::io::ErrorKind::{self, InvalidData, UnexpectedEof};
 use std::cell::Cell;
+use std::str::from_utf8;
 use std::fmt;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -289,7 +290,10 @@ impl<'a> NextToErr<'a> for std::str::Split<'a, char> {
 /// and all other BAM/SAM record fields.
 ///
 /// You can use [aligned_pairs](#method.aligned_pairs) and [matching_pairs](#method.matching_pairs)
-/// to iterate over record/reference aligned indices.
+/// to iterate over record/reference aligned positions.
+///
+/// If the record has an MD tag, you can use [aligned_positions](#method.aligned_positions) to get record/reference
+/// positions and corresponding nucleotides.
 #[derive(Clone)]
 pub struct Record {
     ref_id: i32,
@@ -356,7 +360,8 @@ impl Record {
     fn corrupt(&mut self, text: &str) -> io::Error {
         if self.name.is_empty() {
             io::Error::new(InvalidData,
-                format!("Corrupted record {}: {}", std::str::from_utf8(&self.name).unwrap_or("_"), text))
+                format!("Corrupted record {}: {}",
+                    std::str::from_utf8(&self.name).unwrap_or("*NAME NOT UTF-8*"), text))
         } else {
             io::Error::new(InvalidData, format!("Corrupted record: {}", text))
         }
@@ -945,7 +950,7 @@ impl Record {
     }
 
     /// Returns an iterator over pairs `(Option<u32>, Option<u32>)`.
-    /// The first element represents a sequence index, and the second element represents a
+    /// The first element contains a sequence index, and the second element contains a
     /// reference index. If the current operation is an insertion or a deletion, the respective
     /// element will be `None.`
     ///
@@ -962,12 +967,252 @@ impl Record {
     pub fn matching_pairs(&self) -> cigar::MatchingPairs {
         self.cigar.matching_pairs(self.start as u32)
     }
+
+    /// Returns an iterator over [AlignmentPosition](struct.AlignmentPosition.html), which stores information
+    /// about a single position in the record-reference alignment.
+    ///
+    /// The function returns [NucleotidesError](enum.NucleotidesError.html)
+    /// if the record does not have a sequence or an MD tag.
+    ///
+    /// ```rust
+    /// for pos in record.aligned_positions().unwrap() {
+    ///     if let Some((record_pos, record_nt)) = pos.record_pos_nt() {
+    ///         print!("{} {}, ", record_pos, record_nt as char);
+    ///     } else {
+    ///         print!("- , ");
+    ///     }
+    ///     if let Some((ref_pos, ref_nt)) = pos.ref_pos_nt() {
+    ///         println!("{} {}", ref_pos, ref_nt as char);
+    ///     } else {
+    ///         println!("-");
+    ///     }
+    /// }
+    /// ```
+    pub fn aligned_positions(&self) -> Result<AlignedPositions, NucleotidesError> {
+        if !self.sequence().available() {
+            return Err(NucleotidesError::NoSequence);
+        }
+        let md_tag = match self.tags().get(b"MD") {
+            Some(tags::TagValue::String(tag, _)) => tag,
+            Some(_) => return Err(NucleotidesError::IncorrectMD),
+            None => return Err(NucleotidesError::NoMD),
+        };
+
+        Ok(AlignedPositions {
+            parent: self,
+            aligned_pairs: self.cigar.aligned_pairs(self.start as u32),
+            md_tag,
+            md_remaining_len: 0,
+            md_index: 0,
+        })
+    }
 }
 
 impl fmt::Debug for Record {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "{} (len {}) aligned to [{}]:{}-{}",
-            std::str::from_utf8(&self.name).expect("Record name not in UTF-8"), self.query_len(),
+            std::str::from_utf8(&self.name).unwrap_or("*NAME NOT UTF-8*"), self.query_len(),
             self.ref_id(), self.start() + 1, self.calculate_end())
+    }
+}
+
+/// An error that can arise from [aligned_positions](struct.Record.html#method.aligned_positions).
+///
+/// Variants:
+/// * NoSequence - the record has no sequence,
+/// * NoMD - the record has no MD tag,
+/// * IncorrectMD - the record has an MD tag, but it has an unexpected type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NucleotidesError {
+    NoSequence,
+    NoMD,
+    IncorrectMD,
+}
+
+const MISSING: u32 = std::u32::MAX;
+
+/// Contains single position in the alignment between the record and the reference.
+#[derive(Clone)]
+pub struct AlignmentPosition {
+    record_pos: u32,
+    record_nt: u8,
+    ref_pos: u32,
+    ref_nt: u8,
+}
+
+impl AlignmentPosition {
+    /// Returns record position unless within a deletion.
+    pub fn record_pos(&self) -> Option<u32> {
+        if self.record_pos != MISSING {
+            Some(self.record_pos)
+        } else {
+            None
+        }
+    }
+
+    /// Returns record nucleotide unless within a deletion.
+    pub fn record_nt(&self) -> Option<u8> {
+        if self.record_pos != MISSING {
+            Some(self.record_nt)
+        } else {
+            None
+        }
+    }
+
+    /// Returns record position and nucleotide unless within a deletion.
+    pub fn record_pos_nt(&self) -> Option<(u32, u8)> {
+        if self.record_pos != MISSING {
+            Some((self.record_pos, self.record_nt))
+        } else {
+            None
+        }
+    }
+
+    /// Returns reference position unless within an insertion.
+    pub fn ref_pos(&self) -> Option<u32> {
+        if self.ref_pos != MISSING {
+            Some(self.ref_pos)
+        } else {
+            None
+        }
+    }
+
+    /// Returns reference nucleotide unless within an insertion.
+    pub fn ref_nt(&self) -> Option<u8> {
+        if self.ref_pos != MISSING {
+            Some(self.ref_nt)
+        } else {
+            None
+        }
+    }
+
+    /// Returns reference position and nucleotide unless within an insertion.
+    pub fn ref_pos_nt(&self) -> Option<(u32, u8)> {
+        if self.ref_pos != MISSING {
+            Some((self.ref_pos, self.ref_nt))
+        } else {
+            None
+        }
+    }
+
+    /// Returns `true` if the current position is an insertion.
+    pub fn is_insertion(&self) -> bool {
+        self.ref_pos == MISSING
+    }
+
+    /// Returns `true` if the current position is a deletion.
+    pub fn is_deletion(&self) -> bool {
+        self.record_pos == MISSING
+    }
+
+    /// Returns `true` if the current position is an alignment match:
+    /// both nucleotides are present but not necessarily equal.
+    pub fn is_aln_match(&self) -> bool {
+        self.record_pos != MISSING && self.ref_pos != MISSING
+    }
+
+    /// Returns `true` if the current position is a sequence match:
+    /// both nucleotides are present and equal.
+    pub fn is_seq_match(&self) -> bool {
+        self.record_nt == self.ref_nt
+    }
+}
+
+impl fmt::Debug for AlignmentPosition {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.record_pos != MISSING {
+            write!(f, "{}: {}, ", self.record_pos, self.record_nt as char)?;
+        } else {
+            write!(f, "- , ")?;
+        }
+        if self.ref_pos != MISSING {
+            write!(f, "{}: {}", self.ref_pos, self.ref_nt as char)
+        } else {
+            write!(f, " -")
+        }
+    }
+}
+
+/// Iterator over [alignment positions](struct.AlignmentPosition.html).
+#[derive(Clone)]
+pub struct AlignedPositions<'a> {
+    parent: &'a Record,
+    aligned_pairs: cigar::AlignedPairs<'a>,
+    md_tag: &'a [u8],
+    md_remaining_len: u32,
+    md_index: usize,
+}
+
+impl<'a> AlignedPositions<'a> {
+    fn curr_ref_nt(&mut self, record_nt: Option<u8>) -> u8 {
+        let start_with_remaining_md = self.md_remaining_len > 0;
+        while !start_with_remaining_md && self.md_index < self.md_tag.len() {
+            let curr_char = self.md_tag[self.md_index];
+            self.md_index += 1;
+            if curr_char >= b'0' && curr_char <= b'9' {
+                self.md_remaining_len = self.md_remaining_len * 10 + (curr_char - b'0') as u32;
+                continue;
+            }
+
+            if self.md_remaining_len > 0 {
+                self.md_index -= 1;
+                break;
+            }
+            if curr_char == b'^' {
+                assert!(record_nt.is_none(),
+                    "Record {}: Failed to parse MD tag: {}. MD tag indicates deletion, but CIGAR does not",
+                    from_utf8(self.parent.name()).unwrap_or("*NAME NON UTF-8*"),
+                    from_utf8(self.md_tag).unwrap_or("*MD TAG NON UTF-8*"));
+            } else {
+                assert!(curr_char.is_ascii_uppercase(),
+                    "Record {}: Failed to parse MD tag: {}. Unexpected MD char: {}",
+                    from_utf8(self.parent.name()).unwrap_or("*NAME NON UTF-8*"),
+                    from_utf8(self.md_tag).unwrap_or("*MD TAG NON UTF-8*"), curr_char as char);
+                return curr_char;
+            }
+        }
+
+        if self.md_remaining_len > 0 {
+            self.md_remaining_len -= 1;
+            return record_nt.unwrap_or_else(|| panic!(
+                "Record {}: Failed to parse MD tag: {}. Reference should match record within deletion",
+                from_utf8(self.parent.name()).unwrap_or("*NAME NON UTF-8*"),
+                from_utf8(self.md_tag).unwrap_or("*MD TAG NON UTF-8*")));
+        }
+        panic!("Record {}: Failed to parse MD tag: {}. Reached the end of MD tag",
+            from_utf8(self.parent.name()).unwrap_or("*NAME NON UTF-8*"),
+            from_utf8(self.md_tag).unwrap_or("*MD TAG NON UTF-8*"));
+    }
+}
+
+impl<'a> Iterator for AlignedPositions<'a> {
+    type Item = AlignmentPosition;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let pair = self.aligned_pairs.next()?;
+        match pair {
+            (Some(record_pos), Some(ref_pos)) => {
+                let record_nt = self.parent.sequence().at(record_pos as usize);
+                let ref_nt = self.curr_ref_nt(Some(record_nt));
+                return Some(AlignmentPosition { record_pos, record_nt, ref_pos, ref_nt });
+            },
+            (Some(record_pos), None) => {
+                let record_nt = self.parent.sequence().at(record_pos as usize);
+                return Some(AlignmentPosition {
+                    record_pos, record_nt,
+                    ref_pos: MISSING,
+                    ref_nt: 0,
+                });
+            },
+            (None, Some(ref_pos)) => {
+                let ref_nt = self.curr_ref_nt(None);
+                return Some(AlignmentPosition {
+                    ref_pos, ref_nt,
+                    record_pos: MISSING,
+                    record_nt: 0,
+                });
+            },
+            (None, None) => unreachable!(),
+        }
     }
 }
