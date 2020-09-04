@@ -369,7 +369,10 @@ impl Record {
 
     /// Fills the record from a `stream` of uncompressed BAM contents.
     /// Returns `false`, if the file ended and the record was not read.
-    pub(crate) fn fill_from_bam<R: Read>(&mut self, stream: &mut R) -> io::Result<bool> {
+    ///
+    /// Use [BamReader](../bam_reader/struct.BamReader.html) or [IndexedReader](../bam_reader/struct.BamReader.html)
+    /// instead of this function whenever possible.
+    pub fn fill_from_bam<R: Read>(&mut self, stream: &mut R) -> io::Result<bool> {
         self.name.clear();
         let block_size = match stream.read_i32::<LittleEndian>() {
             Ok(value) => {
@@ -386,7 +389,7 @@ impl Record {
                 }
             },
         };
-        
+
         let ref_id = stream.read_i32::<LittleEndian>()?;
         if ref_id < -1 {
             return Err(self.corrupt("Reference id < 1"));
@@ -763,7 +766,7 @@ impl Record {
         stream.write_i32::<LittleEndian>(self.mate_ref_id)?;
         stream.write_i32::<LittleEndian>(self.mate_start)?;
         stream.write_i32::<LittleEndian>(self.template_len)?;
-        
+
         stream.write_all(&self.name)?;
         stream.write_u8(0)?;
         if self.cigar.len() <= 0xffff {
@@ -989,6 +992,8 @@ impl Record {
     ///     }
     /// }
     /// ```
+    ///
+    /// Iterator may panic if the MD tag does not match the alignment.
     pub fn alignment_entries(&self) -> Result<EntriesIter, EntriesError> {
         if !self.sequence().available() {
             return Err(EntriesError::NoSequence);

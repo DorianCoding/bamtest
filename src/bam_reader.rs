@@ -5,7 +5,7 @@ use std::io::{Read, Seek, Result, Error};
 use std::io::ErrorKind::{InvalidData, InvalidInput};
 use std::path::{Path, PathBuf};
 
-use super::index::{self, Index};
+use super::index::{self, Index, Chunk, VirtualOffset};
 use super::record;
 use super::bgzip::{self, ReadBgzip};
 use super::header::Header;
@@ -33,6 +33,14 @@ impl<'a, R: Read + Seek> RegionViewer<'a, R> {
     /// Returns [BAI index](../index/struct.Index.html).
     pub fn index(&self) -> &Index {
         self.parent.index()
+    }
+
+    /// Returns current [virtual offset](../index/struct.VirtualOffset.html).
+    ///
+    /// If the reader has not started, returns the start of the first chunk.
+    /// If the reader finished the current queue, returns the end of the last chunk.
+    pub fn current_offset(&self) -> VirtualOffset {
+        self.parent.current_offset()
     }
 }
 
@@ -462,6 +470,33 @@ impl<R: Read + Seek> IndexedReader<R> {
         }
     }
 
+    /// Returns an iterator over records at the specific offsets into the BAM file
+    /// (see [Chunk](../index/struct.Chunk.html)).
+    pub fn fetch_chunks<'a, I>(&'a mut self, chunks: I) -> RegionViewer<'a, R>
+    where I: IntoIterator<Item = Chunk>
+    {
+        self.fetch_chunks_by(chunks, |_| true)
+    }
+
+    /// Returns an iterator over records at the specific offsets into the BAM file
+    /// (see [Chunk](../index/struct.Chunk.html)).
+    ///
+    /// Records will be filtered by `predicate`. It helps to slightly reduce fetching time,
+    /// as some records will be removed without allocating new memory and without calculating
+    /// alignment length.
+    pub fn fetch_chunks_by<'a, F, I>(&'a mut self, chunks: I, predicate: F) -> RegionViewer<'a, R>
+    where F: 'static + Fn(&record::Record) -> bool,
+          I: IntoIterator<Item = Chunk>,
+    {
+        self.reader.set_chunks(chunks);
+        RegionViewer {
+            parent: self,
+            start: std::i32::MIN,
+            end: std::i32::MAX,
+            predicate: Box::new(predicate),
+        }
+    }
+
     /// Returns [header](../header/struct.Header.html).
     pub fn header(&self) -> &Header {
         &self.header
@@ -477,6 +512,14 @@ impl<R: Read + Seek> IndexedReader<R> {
     /// Use with caution: pausing and unpausing takes some time.
     pub fn pause(&mut self) {
         self.reader.pause();
+    }
+
+    /// Returns current [virtual offset](../index/struct.VirtualOffset.html).
+    ///
+    /// If the reader has not started, returns the start of the first chunk.
+    /// If the reader finished the current queue, returns the end of the last chunk.
+    pub fn current_offset(&self) -> VirtualOffset {
+        self.reader.current_offset()
     }
 }
 

@@ -553,6 +553,24 @@ impl<R: Read + Seek> SeekReader<R> {
     pub fn take_stream(self) -> R {
         self.reader.take_stream()
     }
+
+    /// Returns current [virtual offset](../../index/struct.VirtualOffset.html).
+    ///
+    /// If the reader has not started, returns the start of the first chunk.
+    /// If the reader finished the current queue, returns the end of the last chunk.
+    pub fn current_offset(&self) -> VirtualOffset {
+        if !self.started {
+            // If there is no reading queue, returns zero offset.
+            return self.reader.chunks().first().map(|chunk| chunk.start()).unwrap_or(VirtualOffset::MIN);
+        }
+
+        let block = match self.current() {
+            Some(value) => value,
+            // Reader reached the end of the reading queue.
+            None => return self.reader.chunks.last().map(|chunk| chunk.end()).unwrap_or(VirtualOffset::MAX),
+        };
+        VirtualOffset::new(block.offset().unwrap(), self.contents_offset as u16)
+    }
 }
 
 impl<R: Read + Seek> ReadBgzip for SeekReader<R> {
@@ -566,8 +584,7 @@ impl<R: Read + Seek> ReadBgzip for SeekReader<R> {
         if block_offset >= chunks[self.chunks_index].end() {
             self.chunks_index += 1;
         }
-        self.contents_offset = max(block_offset, chunks[self.chunks_index].start())
-            .contents_offset() as usize;
+        self.contents_offset = max(block_offset, chunks[self.chunks_index].start()).contents_offset() as usize;
         Ok(block)
     }
 
@@ -605,8 +622,8 @@ impl<R: Read + Seek> Read for SeekReader<R> {
             };
             if self.contents_offset < contents_end {
                 let read_bytes = min(contents_end - self.contents_offset, buf.len());
-                buf[..read_bytes].copy_from_slice(&block.uncompressed_data()
-                    [self.contents_offset..self.contents_offset + read_bytes]);
+                buf[..read_bytes].copy_from_slice(
+                    &block.uncompressed_data()[self.contents_offset..self.contents_offset + read_bytes]);
                 std::mem::drop(block);
                 self.contents_offset += read_bytes;
                 return Ok(read_bytes)
@@ -616,8 +633,7 @@ impl<R: Read + Seek> Read for SeekReader<R> {
             let chunks = self.reader.chunks();
             let read_next = if block_offset == end_offset.block_offset() {
                 self.chunks_index += 1;
-                self.chunks_index >= chunks.len()
-                    || chunks[self.chunks_index].start().block_offset() != block_offset
+                self.chunks_index >= chunks.len() || chunks[self.chunks_index].start().block_offset() != block_offset
             } else {
                 true
             };
