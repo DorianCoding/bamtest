@@ -463,12 +463,12 @@ pub trait ReadBgzip {
     /// however you can clone the block, if needed.
     fn next(&mut self) -> Result<&Block, BlockError>;
 
-    /// Returns the current block, if possible, and does not advance the stream.
+    /// Returns the current block, if possible. This function does not advance the stream.
     fn current(&self) -> Option<&Block>;
 
-    /// Pauses multi-thread reader this  and does nothing for single-thread reader.
+    /// Pauses multi-thread reader and does nothing for single-thread reader.
     ///
-    /// Practically, this function increases sleeping time for decompressing threads, so the threads are still active,
+    /// This function increases sleeping time for decompressing threads, so the threads are still active,
     /// but wake up rarely.
     fn pause(&mut self);
 }
@@ -481,11 +481,14 @@ pub trait ReadBgzip {
 /// main thread reads the blocks from a file/stream. If `additional_threads` is 0, the main thread
 /// will decompress blocks itself.
 ///
-/// When this reader is opened, it does read not anything, until you specify reading regions
-/// (see [set_chunks](#method.set_chunks) and [make_consecutive](#method.make_consecutive)).
+/// When this reader is opened, it does read not anything, until you specify reading regions.
+/// You can do that by using [Seek](#impl-Seek) trait, but it is recommended to use methods
+/// [set_chunks](#method.set_chunks), [make_consecutive](#method.make_consecutive) and
+/// [from_offset](#method.from_offset). Note, that in multi-threaded `SeekReader` it is important to
+/// correctly set future reading queue (use `set_chunks` instead of running `from_offset` multiple times).
 ///
 /// You can read the contents using `io::Read`,
-/// or read blocks using [ReadBgzip](trait.ReadBgzip.html).
+/// or read blocks using [ReadBgzip](trait.ReadBgzip.html) trait.
 pub struct SeekReader<R: Read + Seek> {
     decompressor: Box<dyn DecompressBlock<JumpingReadBlock<R>>>,
     reader: JumpingReadBlock<R>,
@@ -512,7 +515,8 @@ impl<R: Read + Seek> SeekReader<R> {
             Box::new(MultiThread::new(additional_threads))
         };
         Ok(Self {
-            decompressor, reader,
+            decompressor,
+            reader,
             chunks_index: 0,
             started: false,
             contents_offset: 0,
@@ -649,8 +653,42 @@ impl<R: Read + Seek> Read for SeekReader<R> {
     }
 }
 
-/// Reads bgzip file in a consecutive mode. Therefore, the stream does not have to
-/// implement `io::Seek`.
+impl<R: Read + Seek> Seek for SeekReader<R> {
+    /// Seek to a block with a given block offset, and return new block offset.
+    ///
+    /// This function is not implemented for `SeekFrom::End` because it will increase running time and
+    /// is rarely needed.
+    ///
+    /// If the offset is positive, but incorrect (out of bounds or does not point to a start of a block), this function
+    /// will return `Ok`, but consecutive `read` run will return an error.
+    ///
+    /// **Note**: consider running functions [from_offset](#method.from_offset),
+    /// [make_consecutive](#method.make_consecutive) or [set_chunks](#method.set_chunks), as they are more explicit.
+    /// Additionally, `set_chunks` works faster in a multi-threaded reader.
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        match pos {
+            SeekFrom::Start(offset) => {
+                self.from_offset(VirtualOffset::new(offset, 0));
+                Ok(offset)
+            }
+            SeekFrom::Current(offset) => {
+                let curr_offset = self.current_offset();
+                let new_offset = curr_offset.block_offset() as i64 + offset;
+                if new_offset < 0 {
+                    Err(io::Error::new(ErrorKind::InvalidInput, "invalid seek to a negative or overflowing position"))
+                } else {
+                    let new_offset = new_offset as u64;
+                    self.from_offset(VirtualOffset::new(new_offset, 0));
+                    Ok(new_offset)
+                }
+            },
+            SeekFrom::End(_) => Err(io::Error::new(ErrorKind::InvalidInput,
+                "SeekReader::seek not implemented for SeekFrom::End")),
+        }
+    }
+}
+
+/// Reads bgzip file in a consecutive mode. Therefore, the stream does not have to implement `io::Seek`.
 ///
 /// You can open the reader using [from_path](#method.from_path) or
 /// [from_stream](#method.from_stream).
@@ -659,7 +697,7 @@ impl<R: Read + Seek> Read for SeekReader<R> {
 /// will decompress blocks itself.
 ///
 /// You can read the contents using `io::Read`,
-/// or read blocks using [ReadBgzip](trait.ReadBgzip.html).
+/// or read blocks using [ReadBgzip](trait.ReadBgzip.html) trait.
 pub struct ConsecutiveReader<R: Read> {
     decompressor: Box<dyn DecompressBlock<ConsecutiveReadBlock<R>>>,
     reader: ConsecutiveReadBlock<R>,

@@ -277,7 +277,7 @@ impl Block {
         Ok(())
     }
 
-    /// Writes the block to `stream`. The function panics if the block was not compressed.
+    /// Writes the compressed block to `stream`. The function panics if the block was not compressed.
     pub fn dump<W: Write>(&self, stream: &mut W) -> io::Result<()> {
         assert!(!self.compressed.is_empty(), "Cannot write an uncompressed block");
         let block_size = self.block_size().expect("Block size should be defined already") - 1;

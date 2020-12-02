@@ -97,7 +97,7 @@ fn test_indexed_reader<W: Write>(path: &str, additional_threads: u16, log: &mut 
 
         let timer = Instant::now();
         let mut child = Command::new("samtools")
-            .args(&["view", "-h", "--no-PG"])
+            .args(&["view", "-h"])
             .arg(path)
             .arg(format!("{}:{}-{}", ref_name, start + 1, end))
             .args(&["-o", &output2])
@@ -138,7 +138,7 @@ fn test_bam_reader<W: Write>(path: &str, additional_threads: u16, log: &mut W) {
 
     let timer = Instant::now();
     let mut child = Command::new("samtools")
-        .args(&["view", "-h", "--no-PG"])
+        .args(&["view", "-h"])
         .arg(path)
         .args(&["-o", &output2])
         .spawn()
@@ -177,7 +177,7 @@ fn test_bam_to_bam<W: Write>(path: &str, additional_threads: u16, log: &mut W) {
 
     let timer = Instant::now();
     let mut child = Command::new("samtools")
-        .args(&["view", "-h", "--no-PG"])
+        .args(&["view", "-h"])
         .arg(&path)
         .args(&["-o", &output2])
         .spawn()
@@ -188,7 +188,7 @@ fn test_bam_to_bam<W: Write>(path: &str, additional_threads: u16, log: &mut W) {
     writeln!(log, "        total {} records", count).unwrap();
 
     let mut child = Command::new("samtools")
-        .args(&["view", "-h", "--no-PG"])
+        .args(&["view", "-h"])
         .arg(&bam_output)
         .args(&["-o", &output1])
         .spawn()
@@ -232,7 +232,7 @@ fn test_bam_to_bam_pause<W: Write>(path: &str, additional_threads: u16, log: &mu
 
     let timer = Instant::now();
     let mut child = Command::new("samtools")
-        .args(&["view", "-h", "--no-PG"])
+        .args(&["view", "-h"])
         .arg(&path)
         .args(&["-o", &output2])
         .spawn()
@@ -243,7 +243,7 @@ fn test_bam_to_bam_pause<W: Write>(path: &str, additional_threads: u16, log: &mu
     writeln!(log, "        total {} records", count).unwrap();
 
     let mut child = Command::new("samtools")
-        .args(&["view", "-h", "--no-PG"])
+        .args(&["view", "-h"])
         .arg(&bam_output)
         .args(&["-o", &output1])
         .spawn()
@@ -302,7 +302,7 @@ fn test_ind_bam_to_bam<W: Write>(path: &str, additional_threads: u16, log: &mut 
 
         let timer = Instant::now();
         let mut child = Command::new("samtools")
-            .args(&["view", "-h", "--no-PG"])
+            .args(&["view", "-h"])
             .arg(&path)
             .arg(format!("{}:{}-{}", ref_name, start + 1, end))
             .args(&["-o", &output2])
@@ -314,7 +314,7 @@ fn test_ind_bam_to_bam<W: Write>(path: &str, additional_threads: u16, log: &mut 
         writeln!(log, "        total {} records", count).unwrap();
 
         let mut child = Command::new("samtools")
-        .args(&["view", "-h", "--no-PG"])
+        .args(&["view", "-h"])
         .arg(&bam_output)
         .args(&["-o", &output1])
         .spawn()
@@ -352,7 +352,7 @@ fn test_sam_to_bam<W: Write>(path: &str, log: &mut W) {
 
     let timer = Instant::now();
     let mut child = Command::new("samtools")
-        .args(&["view", "-h", "--no-PG"])
+        .args(&["view", "-h"])
         .arg(&bam_output)
         .args(&["-o", &output1])
         .spawn()
