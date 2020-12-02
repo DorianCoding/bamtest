@@ -100,7 +100,7 @@ impl Worker {
                             } else {
                                 Task::Interrupted(block)
                             };
-                            std::mem::replace(task, new_value);
+                            *task = new_value;
                             continue 'outer;
                         },
                         _ => {},

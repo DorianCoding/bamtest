@@ -87,7 +87,7 @@ impl Worker {
                         // Insert two Ready Tasks.
                         for i in 0..guard.tasks.len() {
                             if guard.tasks[i].is_not_ready(self.worker_id) {
-                                std::mem::replace(&mut guard.tasks[i], Task::Ready(block, res1));
+                                guard.tasks[i] = Task::Ready(block, res1);
                                 guard.tasks.insert(i + 1, Task::Ready(second_half, res2));
                                 continue 'outer;
                             }
@@ -104,7 +104,7 @@ impl Worker {
             if let Ok(mut guard) = queue.lock() {
                 for task in guard.tasks.iter_mut().rev() {
                     if task.is_not_ready(self.worker_id) {
-                        std::mem::replace(task, Task::Ready(block, res));
+                        *task = Task::Ready(block, res);
                         continue 'outer;
                     }
                 }
