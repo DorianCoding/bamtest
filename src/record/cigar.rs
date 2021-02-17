@@ -205,11 +205,8 @@ impl Cigar {
         Ok(())
     }
 
-    pub(crate) fn fill_from<R: ReadBytesExt>(&mut self, stream: &mut R, len: usize)
-            -> io::Result<()> {
-        unsafe {
-            super::resize(&mut self.0, len);
-        }
+    pub(crate) fn fill_from<R: ReadBytesExt>(&mut self, stream: &mut R, len: usize) -> io::Result<()> {
+        super::resize(&mut self.0, len);
         stream.read_u32_into::<LittleEndian>(&mut self.0)?;
         Ok(())
     }

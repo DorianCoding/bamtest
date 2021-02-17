@@ -131,12 +131,10 @@ pub const MAX_BLOCK_SIZE: usize = 65536;
 const HEADER_SIZE: usize = 12;
 const MIN_EXTRA_SIZE: usize = 6;
 const FOOTER_SIZE: usize = 8;
-// WRAPPER_SIZE = 26
-const WRAPPER_SIZE: usize = HEADER_SIZE + MIN_EXTRA_SIZE + FOOTER_SIZE;
 
 /// Biggest possible length of the compressed data (excluding header + footer).
 /// Equal to [MAX_BLOCK_SIZE](constant.MAX_BLOCK_SIZE.html) `- 26 = 65510`.
-pub const MAX_COMPRESSED_SIZE: usize = MAX_BLOCK_SIZE - WRAPPER_SIZE;
+pub const MAX_COMPRESSED_SIZE: usize = MAX_BLOCK_SIZE - HEADER_SIZE - MIN_EXTRA_SIZE - FOOTER_SIZE;
 
 /// A bgzip block, that can contain compressed, uncompressed data, or both.
 ///
@@ -158,9 +156,15 @@ pub struct Block {
 impl Block {
     /// Creates an empty block.
     pub fn new() -> Self {
+        // Initialize vectors so that we do not have problems with uninitialized memory.
+        let mut uncompressed = vec![0; MAX_BLOCK_SIZE];
+        uncompressed.clear();
+        let mut compressed = vec![0; MAX_COMPRESSED_SIZE + FOOTER_SIZE];
+        compressed.clear();
+
         Self {
-            uncompressed: Vec::with_capacity(MAX_BLOCK_SIZE),
-            compressed: Vec::with_capacity(MAX_COMPRESSED_SIZE + FOOTER_SIZE),
+            uncompressed,
+            compressed,
             buffer: Vec::new(),
             offset: None,
         }
@@ -318,9 +322,9 @@ impl Block {
             stream.read_exact(&mut self.buffer[HEADER_SIZE..])?;
         }
         let block_size = analyze_extra_fields(&self.buffer[HEADER_SIZE..])? as usize + 1;
-        if block_size > MAX_BLOCK_SIZE {
+        if block_size > MAX_BLOCK_SIZE || block_size < HEADER_SIZE + MIN_EXTRA_SIZE {
             return Err(BlockError::Corrupted(
-                format!("Block size {} > {}", block_size, MAX_BLOCK_SIZE)));
+                format!("Block size {} > {} or < {}", block_size, MAX_BLOCK_SIZE, HEADER_SIZE + MIN_EXTRA_SIZE)));
         }
 
         unsafe {
@@ -340,6 +344,7 @@ impl Block {
         let compressed_size = self.compressed.len();
         let exp_uncompressed_size = (&self.compressed[compressed_size - 4..])
             .read_u32::<LittleEndian>().unwrap() as usize;
+        assert!(exp_uncompressed_size <= MAX_BLOCK_SIZE);
         unsafe {
             self.uncompressed.set_len(exp_uncompressed_size);
         }

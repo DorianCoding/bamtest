@@ -578,9 +578,7 @@ impl TagViewer {
     }
 
     pub(crate) fn fill_from<R: Read>(&mut self, stream: &mut R, length: usize) -> io::Result<()> {
-        unsafe {
-            resize(&mut self.raw, length);
-        }
+        resize(&mut self.raw, length);
         stream.read_exact(&mut self.raw)?;
         self.lengths.clear();
         let mut sum_len = 0;

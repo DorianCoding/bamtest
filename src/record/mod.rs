@@ -244,11 +244,20 @@ impl fmt::Display for Flag {
     }
 }
 
-pub(crate) unsafe fn resize<T>(v: &mut Vec<T>, new_len: usize) {
-    if v.capacity() < new_len {
-        v.reserve(new_len - v.len());
+/// This function resizes the vector and fills with initialized values if the capacity increases.
+/// Therefore, the vector is required to have initialized values below its capacity.
+pub(crate) fn resize<T: Default + Copy>(v: &mut Vec<T>, new_len: usize) {
+    unsafe {
+        if v.capacity() < new_len {
+            v.reserve(new_len);
+            v.set_len(v.capacity());
+
+            let new_val = T::default();
+            // NOTE: Can be replaced with `v.fill` after Rust 1.50.
+            v.iter_mut().map(|x| *x = new_val).count();
+        }
+        v.set_len(new_len);
     }
-    v.set_len(new_len);
 }
 
 pub(crate) fn write_iterator<W, I>(writer: &mut W, mut iterator: I) -> io::Result<()>
@@ -434,9 +443,7 @@ impl Record {
         self.set_mate_start(mate_start);
         self.set_template_len(stream.read_i32::<LittleEndian>()?);
 
-        unsafe {
-            resize(&mut self.name, name_len as usize - 1);
-        }
+        resize(&mut self.name, name_len as usize - 1);
         stream.read_exact(&mut self.name)?;
         let _null_symbol = stream.read_u8()?;
 

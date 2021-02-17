@@ -90,9 +90,7 @@ impl Sequence {
     pub fn fill_from<R: Read>(&mut self, stream: &mut R, new_len: usize)
             -> io::Result<()> {
         let short_len = (new_len + 1) / 2;
-        unsafe {
-            resize(&mut self.raw, short_len);
-        }
+        resize(&mut self.raw, short_len);
         stream.read_exact(&mut self.raw)?;
         self.len = new_len;
         Ok(())
@@ -324,9 +322,7 @@ impl Qualities {
 
     /// Clears qualities and fills from a raw stream.
     pub fn fill_from<R: Read>(&mut self, stream: &mut R, len: usize) -> io::Result<()> {
-        unsafe {
-            resize(&mut self.raw, len);
-        }
+        resize(&mut self.raw, len);
         stream.read_exact(&mut self.raw)?;
         Ok(())
     }
