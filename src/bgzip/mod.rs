@@ -434,13 +434,13 @@ impl Block {
 
 struct ObjectPool<T> {
     objects: Vec<T>,
-    constructor: Box<dyn Fn() -> T>,
+    constructor: Box<dyn Fn() -> T + Send>,
     taken: u64,
     brought: u64,
 }
 
 impl<T> ObjectPool<T> {
-    pub fn new<F: 'static + Fn() -> T>(constructor: F) -> Self {
+    pub fn new<F: 'static + Fn() -> T + Send>(constructor: F) -> Self {
         Self {
             objects: vec![],
             constructor: Box::new(constructor),

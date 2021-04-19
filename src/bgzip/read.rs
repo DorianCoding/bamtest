@@ -490,7 +490,7 @@ pub trait ReadBgzip {
 /// You can read the contents using `io::Read`,
 /// or read blocks using [ReadBgzip](trait.ReadBgzip.html) trait.
 pub struct SeekReader<R: Read + Seek> {
-    decompressor: Box<dyn DecompressBlock<JumpingReadBlock<R>>>,
+    decompressor: Box<dyn DecompressBlock<JumpingReadBlock<R>> + Send>,
     reader: JumpingReadBlock<R>,
     chunks_index: usize,
     started: bool,
@@ -509,7 +509,7 @@ impl<R: Read + Seek> SeekReader<R> {
     /// Opens a reader from a stream.
     pub fn from_stream(stream: R, additional_threads: u16) -> io::Result<Self> {
         let reader = JumpingReadBlock::new(stream)?;
-        let decompressor: Box<dyn DecompressBlock<_>> = if additional_threads == 0 {
+        let decompressor: Box<dyn DecompressBlock<_> + Send> = if additional_threads == 0 {
             Box::new(SingleThread::new())
         } else {
             Box::new(MultiThread::new(additional_threads))
@@ -699,7 +699,7 @@ impl<R: Read + Seek> Seek for SeekReader<R> {
 /// You can read the contents using `io::Read`,
 /// or read blocks using [ReadBgzip](trait.ReadBgzip.html) trait.
 pub struct ConsecutiveReader<R: Read> {
-    decompressor: Box<dyn DecompressBlock<ConsecutiveReadBlock<R>>>,
+    decompressor: Box<dyn DecompressBlock<ConsecutiveReadBlock<R>> + Send>,
     reader: ConsecutiveReadBlock<R>,
     contents_offset: usize,
     started: bool,
@@ -717,7 +717,7 @@ impl<R: Read> ConsecutiveReader<R> {
     /// Opens a reader from a stream.
     pub fn from_stream(stream: R, additional_threads: u16) -> Self {
         let reader = ConsecutiveReadBlock::new(stream);
-        let decompressor: Box<dyn DecompressBlock<_>> = if additional_threads == 0 {
+        let decompressor: Box<dyn DecompressBlock<_> + Send> = if additional_threads == 0 {
             Box::new(SingleThread::new())
         } else {
             Box::new(MultiThread::new(additional_threads))
