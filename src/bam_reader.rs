@@ -205,7 +205,8 @@ impl IndexedReaderBuilder {
         let reader = bgzip::SeekReader::from_path(bam_path, self.additional_threads)
             .map_err(|e| Error::new(e.kind(), format!("Failed to open BAM file: {}", e)))?;
 
-        let index = Index::from_path(bai_path)
+        let index = Index::from_path(&bai_path)
+            .or(Index::from_stream(bgzip::SeekReader::from_path(&bai_path, 0)?))
             .map_err(|e| Error::new(e.kind(), format!("Failed to open BAI index: {}", e)))?;
         IndexedReader::new(reader, index)
     }
