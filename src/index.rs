@@ -523,3 +523,10 @@ pub fn bin_to_region(bin: u16) -> (i32, i32) {
         bin, MAX_BIN
     );
 }
+mod tests {
+    use crate::{BamReader, IndexedReader};
+    #[test]
+    pub fn checkindex() {
+        IndexedReader::build().bai_path("/home/guilhem/ferret/full.bam.csi").modification_time(crate::bam_reader::ModificationTime::Warn(Box::new(|f| println!("{}",f)))).from_path("/home/guilhem/ferret/full.bam").unwrap();
+    }
+}

@@ -1,9 +1,12 @@
 //! Indexed and consecutive BAM readers.
 
-use std::fs::File;
+use std::env::temp_dir;
+use std::fs::{self, File};
 use std::io::{Read, Seek, Result, Error};
 use std::io::ErrorKind::{InvalidData, InvalidInput};
 use std::path::{Path, PathBuf};
+
+use crate::bgzip::ConsecutiveReader;
 
 use super::index::{self, Index, Chunk, VirtualOffset};
 use super::record;
@@ -154,7 +157,11 @@ pub struct IndexedReaderBuilder {
     modification_time: ModificationTime,
     additional_threads: u16,
 }
-
+impl Default for IndexedReaderBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl IndexedReaderBuilder {
     /// Creates a new [IndexedReader](struct.IndexedReader.html) builder.
     pub fn new() -> Self {
@@ -198,16 +205,23 @@ impl IndexedReaderBuilder {
     /// If BAI path was not specified, the functions tries to open `{bam_path}.bai`.
     pub fn from_path<P: AsRef<Path>>(&self, bam_path: P) -> Result<IndexedReader<File>> {
         let bam_path = bam_path.as_ref();
-        let bai_path = self.bai_path.as_ref().map(PathBuf::clone)
+        let bai_path = self.bai_path.clone()
             .unwrap_or_else(|| PathBuf::from(format!("{}.bai", bam_path.display())));
-        self.modification_time.check(&bam_path, &bai_path)?;
+        self.modification_time.check(bam_path, &bai_path)?;
 
         let reader = bgzip::SeekReader::from_path(bam_path, self.additional_threads)
             .map_err(|e| Error::new(e.kind(), format!("Failed to open BAM file: {}", e)))?;
 
-        let index = Index::from_path(&bai_path)
-            .or(Index::from_stream(bgzip::SeekReader::from_path(&bai_path, 0)?))
-            .map_err(|e| Error::new(e.kind(), format!("Failed to open BAI index: {}", e)))?;
+        let index = match Index::from_path(&bai_path) {
+            Ok(index) => index,
+            Err(_) => {
+                let mut buf: Vec<u8> = Vec::new();
+                let _ = ConsecutiveReader::from_path(&bai_path, self.additional_threads)?.read_to_end(&mut buf)?;
+                let path = temp_dir().join("index.csi");
+                fs::write(&path, &buf)?;
+                Index::from_path(&path).map_err(|e| Error::new(e.kind(), format!("Failed to open BAI index: {}", e)))?
+            }
+        };
         IndexedReader::new(reader, index)
     }
 
