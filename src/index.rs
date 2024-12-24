@@ -326,10 +326,9 @@ impl Index {
     pub fn from_stream<R: Read>(mut stream: R) -> Result<Index> {
         let mut magic = [0_u8; 4];
         stream.read_exact(&mut magic)?;
-        if magic != [b'B', b'A', b'I', 1] {
-            return Err(Error::new(InvalidData, "Input is not in BAI format"));
+        if magic != [b'B', b'A', b'I', 1] || magic != [0x1f,0x8b,0x08,0x04] {
+            return Err(Error::new(InvalidData, "Input is not in BAI or CSI format"));
         }
-
         let n_ref = stream.read_i32::<LittleEndian>()? as usize;
         let mut references = Vec::with_capacity(n_ref);
         for _ in 0..n_ref {
