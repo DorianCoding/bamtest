@@ -336,7 +336,7 @@ impl Index {
         let mut magic = [0_u8; 4];
         stream.read_exact(&mut magic)?;
         if magic != [b'B', b'A', b'I', 1] && magic != [b'C', b'S', b'I', 1] {
-            return Err(Error::new(InvalidData, "Input is not in BAI or CSI format"));
+            return Err(Error::new(InvalidData, format!("Input is not in BAI or CSI format. Got magic number: {}",&String::from_utf8_lossy(&magic))));
         }
         let n_ref = stream.read_i32::<LittleEndian>()? as usize;
         let mut references = Vec::with_capacity(n_ref);
