@@ -1,13 +1,13 @@
 //! BAI index, virtual offset and bgzip chunks.
 
-use std::io::{Result, Error, Read};
-use std::io::ErrorKind::InvalidData;
-use std::path::Path;
-use std::fs::File;
-use std::fmt::{self, Debug, Display, Formatter};
-use std::result;
+use std::cmp::{max, min};
 use std::collections::HashMap;
-use std::cmp::{min, max};
+use std::fmt::{self, Debug, Display, Formatter};
+use std::fs::File;
+use std::io::ErrorKind::InvalidData;
+use std::io::{Error, Read, Result};
+use std::path::Path;
+use std::result;
 
 use byteorder::{LittleEndian, ReadBytesExt};
 
@@ -84,7 +84,10 @@ impl Chunk {
         let start = VirtualOffset::from_stream(stream)?;
         let end = VirtualOffset::from_stream(stream)?;
         if check && end <= start {
-            Err(Error::new(InvalidData, format!("BAI chunk end < start ({}  <  {})", end, start)))
+            Err(Error::new(
+                InvalidData,
+                format!("BAI chunk end < start ({}  <  {})", end, start),
+            ))
         } else {
             Ok(Chunk { start, end })
         }
@@ -147,7 +150,10 @@ impl Bin {
         for i in 0..n_chunks {
             chunks.push(Chunk::from_stream(stream, check_chunks)?);
             if check_chunks && i > 0 && chunks[i].start() < chunks[i - 1].end() {
-                return Err(Error::new(InvalidData, format!("Invalid index: chunks are not sorted for bin {}", bin_id)));
+                return Err(Error::new(
+                    InvalidData,
+                    format!("Invalid index: chunks are not sorted for bin {}", bin_id),
+                ));
             }
         }
         Ok(Bin { bin_id, chunks })
@@ -191,7 +197,7 @@ impl LinearIndex {
         for i in 0..n_intervals {
             let offset = VirtualOffset::from_stream(stream)?;
             match intervals.last() {
-                Some((_, prev_offset)) if *prev_offset == offset => {},
+                Some((_, prev_offset)) if *prev_offset == offset => {}
                 _ => intervals.push((i, offset)),
             }
         }
@@ -223,10 +229,13 @@ impl LinearIndex {
         } else {
             start as u32 / WINDOW_SIZE
         };
-        match self.intervals.binary_search_by(|(index, _)| index.cmp(&start_index)) {
+        match self
+            .intervals
+            .binary_search_by(|(index, _)| index.cmp(&start_index))
+        {
             Ok(i) => self.intervals[i].1,
             Err(0) => VirtualOffset::MIN,
-            Err(i) => self.intervals[i - 1].1
+            Err(i) => self.intervals[i - 1].1,
         }
     }
 }
@@ -326,7 +335,7 @@ impl Index {
     pub fn from_stream<R: Read>(mut stream: R) -> Result<Index> {
         let mut magic = [0_u8; 4];
         stream.read_exact(&mut magic)?;
-        if magic != [b'B', b'A', b'I', 1] && magic != [b'C',b'S',b'I',1] {
+        if magic != [b'B', b'A', b'I', 1] && magic != [b'C', b'S', b'I', 1] {
             return Err(Error::new(InvalidData, "Input is not in BAI or CSI format"));
         }
         let n_ref = stream.read_i32::<LittleEndian>()? as usize;
@@ -335,7 +344,10 @@ impl Index {
             references.push(Reference::from_stream(&mut stream)?);
         }
         let n_unmapped = stream.read_u64::<LittleEndian>().ok();
-        Ok(Index { references, n_unmapped })
+        Ok(Index {
+            references,
+            n_unmapped,
+        })
     }
 
     /// Loads index from path.
@@ -352,7 +364,11 @@ impl Index {
         let min_end_offset = self.references[ref_id].linear_index.min_end_offset(start);
         for bin_id in region_to_bins(start, end) {
             if let Some(bin) = self.references[ref_id].bins.get(&bin_id) {
-                chunks.extend(bin.chunks.iter().filter(|chunk| chunk.end() > min_end_offset));
+                chunks.extend(
+                    bin.chunks
+                        .iter()
+                        .filter(|chunk| chunk.end() > min_end_offset),
+                );
             }
         }
         let mut res = Vec::new();
@@ -378,7 +394,11 @@ impl Index {
     pub fn start_offset(&self) -> Option<VirtualOffset> {
         for (i, reference) in self.references.iter().enumerate() {
             if reference.linear_index.is_empty() {
-                assert!(reference.bins.is_empty(), "BAI Index contiains bins for reference {}, but no linear index", i);
+                assert!(
+                    reference.bins.is_empty(),
+                    "BAI Index contiains bins for reference {}, but no linear index",
+                    i
+                );
                 continue;
             }
             return Some(reference.linear_index.smallest_offset());
@@ -417,7 +437,7 @@ impl Display for Index {
         write!(f, "Unmapped records: ")?;
         match self.n_unmapped {
             Some(count) => write!(f, "{}", count),
-            None => write!(f, "Unknown")
+            None => write!(f, "Unknown"),
         }
     }
 }
@@ -498,5 +518,8 @@ pub fn bin_to_region(bin: u16) -> (i32, i32) {
         }
         left = right;
     }
-    panic!("Bin id should be not bigger than MAX_BIN ({} > {})", bin, MAX_BIN);
+    panic!(
+        "Bin id should be not bigger than MAX_BIN ({} > {})",
+        bin, MAX_BIN
+    );
 }
